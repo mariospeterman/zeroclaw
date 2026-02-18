@@ -1,0 +1,11 @@
+{
+  "id": "evt-compat-001",
+  "schema_version": 1,
+  "profile_id": "compat-profile",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "kind": {
+    "type": "task_started",
+    "task_id": "task-001",
+    "message": "compat-check"
+  }
+}
