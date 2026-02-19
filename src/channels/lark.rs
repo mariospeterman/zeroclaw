@@ -127,6 +127,12 @@ struct LarkMessage {
 /// If no binary frame (pong or event) is received within this window, reconnect.
 const WS_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Returns true when the WebSocket frame indicates live traffic that should
+/// refresh the heartbeat watchdog.
+fn should_refresh_last_recv(msg: &WsMsg) -> bool {
+    matches!(msg, WsMsg::Binary(_) | WsMsg::Ping(_) | WsMsg::Pong(_))
+}
+
 /// Lark/Feishu channel.
 ///
 /// Supports two receive modes (configured via `receive_mode` in config):
@@ -282,7 +288,7 @@ impl LarkChannel {
             payload: None,
         };
         if write
-            .send(WsMsg::Binary(initial_ping.encode_to_vec()))
+            .send(WsMsg::Binary(initial_ping.encode_to_vec().into()))
             .await
             .is_err()
         {
@@ -303,7 +309,7 @@ impl LarkChannel {
                         headers: vec![PbHeader { key: "type".into(), value: "ping".into() }],
                         payload: None,
                     };
-                    if write.send(WsMsg::Binary(ping.encode_to_vec())).await.is_err() {
+                    if write.send(WsMsg::Binary(ping.encode_to_vec().into())).await.is_err() {
                         tracing::warn!("Lark: ping failed, reconnecting");
                         break;
                     }
@@ -321,11 +327,20 @@ impl LarkChannel {
 
                 msg = read.next() => {
                     let raw = match msg {
-                        Some(Ok(WsMsg::Binary(b))) => { last_recv = Instant::now(); b }
-                        Some(Ok(WsMsg::Ping(d))) => { let _ = write.send(WsMsg::Pong(d)).await; continue; }
-                        Some(Ok(WsMsg::Close(_))) | None => { tracing::info!("Lark: WS closed — reconnecting"); break; }
+                        Some(Ok(ws_msg)) => {
+                            if should_refresh_last_recv(&ws_msg) {
+                                last_recv = Instant::now();
+                            }
+                            match ws_msg {
+                                WsMsg::Binary(b) => b,
+                                WsMsg::Ping(d) => { let _ = write.send(WsMsg::Pong(d)).await; continue; }
+                                WsMsg::Pong(_) => continue,
+                                WsMsg::Close(_) => { tracing::info!("Lark: WS closed — reconnecting"); break; }
+                                _ => continue,
+                            }
+                        }
+                        None => { tracing::info!("Lark: WS closed — reconnecting"); break; }
                         Some(Err(e)) => { tracing::error!("Lark: WS read error: {e}"); break; }
-                        _ => continue,
                     };
 
                     let frame = match PbFrame::decode(&raw[..]) {
@@ -363,7 +378,7 @@ impl LarkChannel {
                         let mut ack = frame.clone();
                         ack.payload = Some(br#"{"code":200,"headers":{},"data":[]}"#.to_vec());
                         ack.headers.push(PbHeader { key: "biz_rt".into(), value: "0".into() });
-                        let _ = write.send(WsMsg::Binary(ack.encode_to_vec())).await;
+                        let _ = write.send(WsMsg::Binary(ack.encode_to_vec().into())).await;
                     }
 
                     // Fragment reassembly
@@ -459,6 +474,7 @@ impl LarkChannel {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
+                        thread_ts: None,
                     };
 
                     tracing::debug!("Lark WS: message in {}", lark_msg.chat_id);
@@ -620,6 +636,7 @@ impl LarkChannel {
             content: text,
             channel: "lark".to_string(),
             timestamp,
+            thread_ts: None,
         });
 
         messages
@@ -896,6 +913,21 @@ mod tests {
     fn lark_channel_name() {
         let ch = make_channel();
         assert_eq!(ch.name(), "lark");
+    }
+
+    #[test]
+    fn lark_ws_activity_refreshes_heartbeat_watchdog() {
+        assert!(should_refresh_last_recv(&WsMsg::Binary(
+            vec![1, 2, 3].into()
+        )));
+        assert!(should_refresh_last_recv(&WsMsg::Ping(vec![9, 9].into())));
+        assert!(should_refresh_last_recv(&WsMsg::Pong(vec![8, 8].into())));
+    }
+
+    #[test]
+    fn lark_ws_non_activity_frames_do_not_refresh_heartbeat_watchdog() {
+        assert!(!should_refresh_last_recv(&WsMsg::Text("hello".into())));
+        assert!(!should_refresh_last_recv(&WsMsg::Close(None)));
     }
 
     #[test]

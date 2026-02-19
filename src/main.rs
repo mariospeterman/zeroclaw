@@ -58,6 +58,7 @@ mod identity;
 mod integrations;
 mod memory;
 mod migration;
+mod multimodal;
 mod observability;
 mod onboard;
 mod peripherals;
@@ -120,7 +121,9 @@ enum Commands {
         /// Provider name (used in quick mode, default: openrouter)
         #[arg(long)]
         provider: Option<String>,
-
+        /// Model ID override (used in quick mode)
+        #[arg(long)]
+        model: Option<String>,
         /// Memory backend (sqlite, lucid, markdown, none) - used in quick mode, default: sqlite
         #[arg(long)]
         memory: Option<String>,
@@ -242,6 +245,18 @@ enum Commands {
         #[command(subcommand)]
         peripheral_command: zeroclaw::PeripheralCommands,
     },
+
+    /// Manage configuration
+    Config {
+        #[command(subcommand)]
+        config_command: ConfigCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommands {
+    /// Dump the full configuration JSON Schema to stdout
+    Schema,
 }
 
 #[derive(Subcommand, Debug)]
@@ -381,6 +396,23 @@ enum CronCommands {
         /// Task ID
         id: String,
     },
+    /// Update a scheduled task
+    Update {
+        /// Task ID
+        id: String,
+        /// New cron expression
+        #[arg(long)]
+        expression: Option<String>,
+        /// New IANA timezone
+        #[arg(long)]
+        tz: Option<String>,
+        /// New command to run
+        #[arg(long)]
+        command: Option<String>,
+        /// New job name
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Pause a scheduled task
     Pause {
         /// Task ID
@@ -503,6 +535,7 @@ async fn main() -> Result<()> {
         channels_only,
         api_key,
         provider,
+        model,
         memory,
     } = &cli.command
     {
@@ -510,25 +543,30 @@ async fn main() -> Result<()> {
         let channels_only = *channels_only;
         let api_key = api_key.clone();
         let provider = provider.clone();
+        let model = model.clone();
         let memory = memory.clone();
 
         if interactive && channels_only {
             bail!("Use either --interactive or --channels-only, not both");
         }
-        if channels_only && (api_key.is_some() || provider.is_some() || memory.is_some()) {
-            bail!("--channels-only does not accept --api-key, --provider, or --memory");
+        if channels_only
+            && (api_key.is_some() || provider.is_some() || model.is_some() || memory.is_some())
+        {
+            bail!("--channels-only does not accept --api-key, --provider, --model, or --memory");
         }
-
-        let config = tokio::task::spawn_blocking(move || {
-            if channels_only {
-                onboard::run_channels_repair_wizard()
-            } else if interactive {
-                onboard::run_wizard()
-            } else {
-                onboard::run_quick_setup(api_key.as_deref(), provider.as_deref(), memory.as_deref())
-            }
-        })
-        .await??;
+        let config = if channels_only {
+            onboard::run_channels_repair_wizard().await
+        } else if interactive {
+            onboard::run_wizard().await
+        } else {
+            onboard::run_quick_setup(
+                api_key.as_deref(),
+                provider.as_deref(),
+                model.as_deref(),
+                memory.as_deref(),
+            )
+            .await
+        }?;
         // Auto-start channels if user said yes during wizard
         if std::env::var("ZEROCLAW_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
             channels::start_channels(config).await?;
@@ -537,7 +575,7 @@ async fn main() -> Result<()> {
     }
 
     // All other commands need config loaded first
-    let mut config = Config::load_or_init()?;
+    let mut config = Config::load_or_init().await?;
     config.apply_env_overrides();
 
     match cli.command {
@@ -725,7 +763,7 @@ async fn main() -> Result<()> {
         Commands::Channel { channel_command } => match channel_command {
             ChannelCommands::Start => channels::start_channels(config).await,
             ChannelCommands::Doctor => channels::doctor_channels(config).await,
-            other => channels::handle_command(other, &config),
+            other => channels::handle_command(other, &config).await,
         },
 
         Commands::Integrations {
@@ -747,8 +785,19 @@ async fn main() -> Result<()> {
         }
 
         Commands::Peripheral { peripheral_command } => {
-            peripherals::handle_command(peripheral_command.clone(), &config)
+            peripherals::handle_command(peripheral_command.clone(), &config).await
         }
+
+        Commands::Config { config_command } => match config_command {
+            ConfigCommands::Schema => {
+                let schema = schemars::schema_for!(config::Config);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&schema).expect("failed to serialize JSON Schema")
+                );
+                Ok(())
+            }
+        },
     }
 }
 
@@ -934,12 +983,11 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                         let account_id =
                             extract_openai_account_id_for_profile(&token_set.access_token);
 
-                        let saved = auth_service
-                            .store_openai_tokens(&profile, token_set, account_id, true)?;
+                        auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
                         clear_pending_openai_login(config);
 
-                        println!("Saved profile {}", saved.id);
-                        println!("Active profile for openai-codex: {}", saved.id);
+                        println!("Saved profile {profile}");
+                        println!("Active profile for openai-codex: {profile}");
                         return Ok(());
                     }
                     Err(e) => {
@@ -985,11 +1033,11 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 auth::openai_oauth::exchange_code_for_tokens(&client, &code, &pkce).await?;
             let account_id = extract_openai_account_id_for_profile(&token_set.access_token);
 
-            let saved = auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
+            auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
             clear_pending_openai_login(config);
 
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for openai-codex: {}", saved.id);
+            println!("Saved profile {profile}");
+            println!("Active profile for openai-codex: {profile}");
             Ok(())
         }
 
@@ -1038,11 +1086,11 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 auth::openai_oauth::exchange_code_for_tokens(&client, &code, &pkce).await?;
             let account_id = extract_openai_account_id_for_profile(&token_set.access_token);
 
-            let saved = auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
+            auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
             clear_pending_openai_login(config);
 
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for openai-codex: {}", saved.id);
+            println!("Saved profile {profile}");
+            println!("Active profile for openai-codex: {profile}");
             Ok(())
         }
 
@@ -1068,10 +1116,9 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 kind.as_metadata_value().to_string(),
             );
 
-            let saved =
-                auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for {provider}: {}", saved.id);
+            auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
+            println!("Saved profile {profile}");
+            println!("Active profile for {provider}: {profile}");
             Ok(())
         }
 
@@ -1089,10 +1136,9 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 kind.as_metadata_value().to_string(),
             );
 
-            let saved =
-                auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for {provider}: {}", saved.id);
+            auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
+            println!("Saved profile {profile}");
+            println!("Active profile for {provider}: {profile}");
             Ok(())
         }
 
@@ -1131,8 +1177,8 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
 
         AuthCommands::Use { provider, profile } => {
             let provider = auth::normalize_provider(&provider)?;
-            let active = auth_service.set_active_profile(&provider, &profile)?;
-            println!("Active profile for {provider}: {active}");
+            auth_service.set_active_profile(&provider, &profile)?;
+            println!("Active profile for {provider}: {profile}");
             Ok(())
         }
 
@@ -1173,15 +1219,15 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                     marker,
                     id,
                     profile.kind,
-                    profile.account_id.as_deref().unwrap_or("unknown"),
+                    crate::security::redact(profile.account_id.as_deref().unwrap_or("unknown")),
                     format_expiry(profile)
                 );
             }
 
             println!();
             println!("Active profiles:");
-            for (provider, active) in &data.active_profiles {
-                println!("  {provider}: {active}");
+            for (provider, profile_id) in &data.active_profiles {
+                println!("  {provider}: {profile_id}");
             }
 
             Ok(())

@@ -2,12 +2,13 @@ use crate::providers::{is_glm_alias, is_zai_alias};
 use crate::security::AutonomyLevel;
 use anyhow::{Context, Result};
 use directories::UserDirs;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
+use tokio::fs::{self, File, OpenOptions};
+use tokio::io::AsyncWriteExt;
 
 const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "provider.anthropic",
@@ -45,7 +46,7 @@ static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Clie
 
 // ── Top-level config ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
     /// Workspace directory - computed from home, not serialized
     #[serde(skip)]
@@ -81,6 +82,10 @@ pub struct Config {
     /// Model routing rules — route `hint:<name>` to specific provider+model combos.
     #[serde(default)]
     pub model_routes: Vec<ModelRouteConfig>,
+
+    /// Embedding routing rules — route `hint:<name>` to specific provider+model combos.
+    #[serde(default)]
+    pub embedding_routes: Vec<EmbeddingRouteConfig>,
 
     /// Automatic query classification — maps user messages to model hints.
     #[serde(default)]
@@ -120,6 +125,9 @@ pub struct Config {
     pub http_request: HttpRequestConfig,
 
     #[serde(default)]
+    pub multimodal: MultimodalConfig,
+
+    #[serde(default)]
     pub web_search: WebSearchConfig,
 
     #[serde(default)]
@@ -146,7 +154,7 @@ pub struct Config {
 // ── Delegate Agents ──────────────────────────────────────────────
 
 /// Configuration for a delegate sub-agent used by the `delegate` tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DelegateAgentConfig {
     /// Provider name (e.g. "ollama", "openrouter", "anthropic")
     pub provider: String,
@@ -173,7 +181,7 @@ fn default_max_depth() -> u32 {
 // ── Hardware Config (wizard-driven) ─────────────────────────────
 
 /// Hardware transport mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 pub enum HardwareTransport {
     #[default]
     None,
@@ -194,7 +202,7 @@ impl std::fmt::Display for HardwareTransport {
 }
 
 /// Wizard-driven hardware configuration for physical world interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HardwareConfig {
     /// Whether hardware access is enabled
     #[serde(default)]
@@ -240,7 +248,7 @@ impl Default for HardwareConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentConfig {
     /// When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models.
     #[serde(default)]
@@ -279,9 +287,49 @@ impl Default for AgentConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MultimodalConfig {
+    /// Maximum number of image attachments accepted per request.
+    #[serde(default = "default_multimodal_max_images")]
+    pub max_images: usize,
+    /// Maximum image payload size in MiB before base64 encoding.
+    #[serde(default = "default_multimodal_max_image_size_mb")]
+    pub max_image_size_mb: usize,
+    /// Allow fetching remote image URLs (http/https). Disabled by default.
+    #[serde(default)]
+    pub allow_remote_fetch: bool,
+}
+
+fn default_multimodal_max_images() -> usize {
+    4
+}
+
+fn default_multimodal_max_image_size_mb() -> usize {
+    5
+}
+
+impl MultimodalConfig {
+    /// Clamp configured values to safe runtime bounds.
+    pub fn effective_limits(&self) -> (usize, usize) {
+        let max_images = self.max_images.clamp(1, 16);
+        let max_image_size_mb = self.max_image_size_mb.clamp(1, 20);
+        (max_images, max_image_size_mb)
+    }
+}
+
+impl Default for MultimodalConfig {
+    fn default() -> Self {
+        Self {
+            max_images: default_multimodal_max_images(),
+            max_image_size_mb: default_multimodal_max_image_size_mb(),
+            allow_remote_fetch: false,
+        }
+    }
+}
+
 // ── Identity (AIEOS / OpenClaw format) ──────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IdentityConfig {
     /// Identity format: "openclaw" (default) or "aieos"
     #[serde(default = "default_identity_format")]
@@ -310,7 +358,7 @@ impl Default for IdentityConfig {
 
 // ── Cost tracking and budget enforcement ───────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CostConfig {
     /// Enable cost tracking (default: false)
     #[serde(default)]
@@ -337,7 +385,7 @@ pub struct CostConfig {
     pub prices: std::collections::HashMap<String, ModelPricing>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ModelPricing {
     /// Input price per 1M tokens
     #[serde(default)]
@@ -451,7 +499,7 @@ fn get_default_pricing() -> std::collections::HashMap<String, ModelPricing> {
 
 // ── Peripherals (hardware: STM32, RPi GPIO, etc.) ────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct PeripheralsConfig {
     /// Enable peripheral support (boards become agent tools)
     #[serde(default)]
@@ -465,7 +513,7 @@ pub struct PeripheralsConfig {
     pub datasheet_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PeripheralBoardConfig {
     /// Board type: "nucleo-f401re", "rpi-gpio", "esp32", etc.
     pub board: String,
@@ -501,7 +549,7 @@ impl Default for PeripheralBoardConfig {
 
 // ── Gateway security ─────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GatewayConfig {
     /// Gateway port (default: 3000)
     #[serde(default = "default_gateway_port")]
@@ -597,10 +645,10 @@ impl Default for GatewayConfig {
 
 // ── Composio (managed tool surface) ─────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ComposioConfig {
     /// Enable Composio integration for 1000+ OAuth tools
-    #[serde(default)]
+    #[serde(default, alias = "enable")]
     pub enabled: bool,
     /// Composio API key (stored encrypted when secrets.encrypt = true)
     #[serde(default)]
@@ -626,7 +674,7 @@ impl Default for ComposioConfig {
 
 // ── Secrets (encrypted credential store) ────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SecretsConfig {
     /// Enable encryption for API keys and tokens in config.toml
     #[serde(default = "default_true")]
@@ -641,7 +689,7 @@ impl Default for SecretsConfig {
 
 // ── Browser (friendly-service browsing only) ───────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserComputerUseConfig {
     /// Sidecar endpoint for computer-use actions (OS-level mouse/keyboard/screenshot)
     #[serde(default = "default_browser_computer_use_endpoint")]
@@ -688,7 +736,7 @@ impl Default for BrowserComputerUseConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserConfig {
     /// Enable `browser_open` tool (opens URLs in Brave without scraping)
     #[serde(default)]
@@ -741,7 +789,7 @@ impl Default for BrowserConfig {
 
 // ── HTTP request tool ───────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct HttpRequestConfig {
     /// Enable `http_request` tool for API interactions
     #[serde(default)]
@@ -767,7 +815,7 @@ fn default_http_timeout_secs() -> u64 {
 
 // ── Web search ───────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchConfig {
     /// Enable `web_search_tool` for web searches
     #[serde(default = "default_true")]
@@ -812,7 +860,7 @@ impl Default for WebSearchConfig {
 
 // ── Proxy ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyScope {
     Environment,
@@ -821,7 +869,7 @@ pub enum ProxyScope {
     Services,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProxyConfig {
     /// Enable proxy support for selected scope.
     #[serde(default)]
@@ -1271,19 +1319,19 @@ fn parse_proxy_enabled(raw: &str) -> Option<bool> {
 }
 // ── Memory ───────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct StorageConfig {
     #[serde(default)]
     pub provider: StorageProviderSection,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct StorageProviderSection {
     #[serde(default)]
     pub config: StorageProviderConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StorageProviderConfig {
     /// Storage engine key (e.g. "postgres", "sqlite").
     #[serde(default)]
@@ -1332,14 +1380,14 @@ impl Default for StorageProviderConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct MemoryConfig {
     /// "sqlite" | "lucid" | "postgres" | "markdown" | "none" (`none` = explicit no-op memory)
     ///
     /// `postgres` requires `[storage.provider.config]` with `db_url` (`dbURL` alias supported).
     pub backend: String,
-    /// Auto-save conversation context to memory
+    /// Auto-save user-stated conversation input to memory (assistant output is excluded)
     pub auto_save: bool,
     /// Run memory/session hygiene (archiving + retention cleanup)
     #[serde(default = "default_hygiene_enabled")]
@@ -1482,7 +1530,7 @@ impl Default for MemoryConfig {
 
 // ── Observability ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ObservabilityConfig {
     /// "none" | "log" | "prometheus" | "otel"
     pub backend: String,
@@ -1508,7 +1556,7 @@ impl Default for ObservabilityConfig {
 
 // ── Autonomy / Security ──────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AutonomyConfig {
     pub level: AutonomyLevel,
     pub workspace_only: bool,
@@ -1593,7 +1641,7 @@ impl Default for AutonomyConfig {
 
 // ── Runtime ──────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RuntimeConfig {
     /// Runtime kind (`native` | `docker`).
     #[serde(default = "default_runtime_kind")]
@@ -1602,9 +1650,16 @@ pub struct RuntimeConfig {
     /// Docker runtime settings (used when `kind = "docker"`).
     #[serde(default)]
     pub docker: DockerRuntimeConfig,
+
+    /// Global reasoning override for providers that expose explicit controls.
+    /// - `None`: provider default behavior
+    /// - `Some(true)`: request reasoning/thinking when supported
+    /// - `Some(false)`: disable reasoning/thinking when supported
+    #[serde(default)]
+    pub reasoning_enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DockerRuntimeConfig {
     /// Runtime image used to execute shell commands.
     #[serde(default = "default_docker_image")]
@@ -1674,13 +1729,14 @@ impl Default for RuntimeConfig {
         Self {
             kind: default_runtime_kind(),
             docker: DockerRuntimeConfig::default(),
+            reasoning_enabled: None,
         }
     }
 }
 
 // ── Reliability / supervision ────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReliabilityConfig {
     /// Retries per provider before failing over.
     #[serde(default = "default_provider_retries")]
@@ -1755,7 +1811,7 @@ impl Default for ReliabilityConfig {
 
 // ── Scheduler ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SchedulerConfig {
     /// Enable the built-in scheduler loop.
     #[serde(default = "default_scheduler_enabled")]
@@ -1807,7 +1863,7 @@ impl Default for SchedulerConfig {
 /// ```
 ///
 /// Usage: pass `hint:reasoning` as the model parameter to route the request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ModelRouteConfig {
     /// Task hint name (e.g. "reasoning", "fast", "code", "summarize")
     pub hint: String,
@@ -1820,11 +1876,41 @@ pub struct ModelRouteConfig {
     pub api_key: Option<String>,
 }
 
+// ── Embedding routing ───────────────────────────────────────────
+
+/// Route an embedding hint to a specific provider + model.
+///
+/// ```toml
+/// [[embedding_routes]]
+/// hint = "semantic"
+/// provider = "openai"
+/// model = "text-embedding-3-small"
+/// dimensions = 1536
+///
+/// [memory]
+/// embedding_model = "hint:semantic"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EmbeddingRouteConfig {
+    /// Route hint name (e.g. "semantic", "archive", "faq")
+    pub hint: String,
+    /// Embedding provider (`none`, `openai`, or `custom:<url>`)
+    pub provider: String,
+    /// Embedding model to use with that provider
+    pub model: String,
+    /// Optional embedding dimension override for this route
+    #[serde(default)]
+    pub dimensions: Option<usize>,
+    /// Optional API key override for this route's provider
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
 // ── Query Classification ─────────────────────────────────────────
 
 /// Automatic query classification — classifies user messages by keyword/pattern
 /// and routes to the appropriate model hint. Disabled by default.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct QueryClassificationConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -1833,7 +1919,7 @@ pub struct QueryClassificationConfig {
 }
 
 /// A single classification rule mapping message patterns to a model hint.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct ClassificationRule {
     /// Must match a `[[model_routes]]` hint value.
     pub hint: String,
@@ -1856,7 +1942,7 @@ pub struct ClassificationRule {
 
 // ── Heartbeat ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HeartbeatConfig {
     pub enabled: bool,
     pub interval_minutes: u32,
@@ -1873,7 +1959,7 @@ impl Default for HeartbeatConfig {
 
 // ── Cron ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CronConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -1896,7 +1982,7 @@ impl Default for CronConfig {
 
 // ── Tunnel ──────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TunnelConfig {
     /// "none", "cloudflare", "tailscale", "ngrok", "custom"
     pub provider: String,
@@ -1926,13 +2012,13 @@ impl Default for TunnelConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CloudflareTunnelConfig {
     /// Cloudflare Tunnel token (from Zero Trust dashboard)
     pub token: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TailscaleTunnelConfig {
     /// Use Tailscale Funnel (public internet) vs Serve (tailnet only)
     #[serde(default)]
@@ -1941,7 +2027,7 @@ pub struct TailscaleTunnelConfig {
     pub hostname: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct NgrokTunnelConfig {
     /// ngrok auth token
     pub auth_token: String,
@@ -1949,7 +2035,7 @@ pub struct NgrokTunnelConfig {
     pub domain: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomTunnelConfig {
     /// Command template to start the tunnel. Use {port} and {host} placeholders.
     /// Example: "bore local {port} --to bore.pub"
@@ -1962,7 +2048,7 @@ pub struct CustomTunnelConfig {
 
 // ── Channels ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ChannelsConfig {
     pub cli: bool,
     pub telegram: Option<TelegramConfig>,
@@ -1974,11 +2060,20 @@ pub struct ChannelsConfig {
     pub matrix: Option<MatrixConfig>,
     pub signal: Option<SignalConfig>,
     pub whatsapp: Option<WhatsAppConfig>,
+    pub linq: Option<LinqConfig>,
     pub email: Option<crate::channels::email_channel::EmailConfig>,
     pub irc: Option<IrcConfig>,
     pub lark: Option<LarkConfig>,
     pub dingtalk: Option<DingTalkConfig>,
     pub qq: Option<QQConfig>,
+    /// Timeout in seconds for processing a single channel message (LLM + tools).
+    /// Default: 300s for on-device LLMs (Ollama) which are slower than cloud APIs.
+    #[serde(default = "default_channel_message_timeout_secs")]
+    pub message_timeout_secs: u64,
+}
+
+fn default_channel_message_timeout_secs() -> u64 {
+    300
 }
 
 impl Default for ChannelsConfig {
@@ -1994,17 +2089,19 @@ impl Default for ChannelsConfig {
             matrix: None,
             signal: None,
             whatsapp: None,
+            linq: None,
             email: None,
             irc: None,
             lark: None,
             dingtalk: None,
             qq: None,
+            message_timeout_secs: default_channel_message_timeout_secs(),
         }
     }
 }
 
 /// Streaming mode for channels that support progressive message updates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamMode {
     /// No streaming -- send the complete response as a single message (default).
@@ -2018,7 +2115,7 @@ fn default_draft_update_interval_ms() -> u64 {
     1000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TelegramConfig {
     pub bot_token: String,
     pub allowed_users: Vec<String>,
@@ -2028,13 +2125,17 @@ pub struct TelegramConfig {
     /// Minimum interval (ms) between draft message edits to avoid rate limits.
     #[serde(default = "default_draft_update_interval_ms")]
     pub draft_update_interval_ms: u64,
+    /// When true, a newer Telegram message from the same sender in the same chat
+    /// cancels the in-flight request and starts a fresh response with preserved history.
+    #[serde(default)]
+    pub interrupt_on_new_message: bool,
     /// When true, only respond to messages that @-mention the bot in groups.
     /// Direct messages are always processed.
     #[serde(default)]
     pub mention_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DiscordConfig {
     pub bot_token: String,
     pub guild_id: Option<String>,
@@ -2050,7 +2151,7 @@ pub struct DiscordConfig {
     pub mention_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SlackConfig {
     pub bot_token: String,
     pub app_token: Option<String>,
@@ -2059,7 +2160,7 @@ pub struct SlackConfig {
     pub allowed_users: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MattermostConfig {
     pub url: String,
     pub bot_token: String,
@@ -2076,18 +2177,18 @@ pub struct MattermostConfig {
     pub mention_only: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WebhookConfig {
     pub port: u16,
     pub secret: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IMessageConfig {
     pub allowed_contacts: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MatrixConfig {
     pub homeserver: String,
     pub access_token: String,
@@ -2099,7 +2200,7 @@ pub struct MatrixConfig {
     pub allowed_users: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalConfig {
     /// Base URL for the signal-cli HTTP daemon (e.g. "http://127.0.0.1:8686").
     pub http_url: String,
@@ -2122,24 +2223,81 @@ pub struct SignalConfig {
     pub ignore_stories: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WhatsAppConfig {
-    /// Access token from Meta Business Suite
-    pub access_token: String,
-    /// Phone number ID from Meta Business API
-    pub phone_number_id: String,
+    /// Access token from Meta Business Suite (Cloud API mode)
+    #[serde(default)]
+    pub access_token: Option<String>,
+    /// Phone number ID from Meta Business API (Cloud API mode)
+    #[serde(default)]
+    pub phone_number_id: Option<String>,
     /// Webhook verify token (you define this, Meta sends it back for verification)
-    pub verify_token: String,
+    /// Only used in Cloud API mode
+    #[serde(default)]
+    pub verify_token: Option<String>,
     /// App secret from Meta Business Suite (for webhook signature verification)
     /// Can also be set via `ZEROCLAW_WHATSAPP_APP_SECRET` environment variable
+    /// Only used in Cloud API mode
     #[serde(default)]
     pub app_secret: Option<String>,
+    /// Session database path for WhatsApp Web client (Web mode)
+    /// When set, enables native WhatsApp Web mode with wa-rs
+    #[serde(default)]
+    pub session_path: Option<String>,
+    /// Phone number for pair code linking (Web mode, optional)
+    /// Format: country code + number (e.g., "15551234567")
+    /// If not set, QR code pairing will be used
+    #[serde(default)]
+    pub pair_phone: Option<String>,
+    /// Custom pair code for linking (Web mode, optional)
+    /// Leave empty to let WhatsApp generate one
+    #[serde(default)]
+    pub pair_code: Option<String>,
     /// Allowed phone numbers (E.164 format: +1234567890) or "*" for all
     #[serde(default)]
     pub allowed_numbers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LinqConfig {
+    /// Linq Partner API token (Bearer auth)
+    pub api_token: String,
+    /// Phone number to send from (E.164 format)
+    pub from_phone: String,
+    /// Webhook signing secret for signature verification
+    #[serde(default)]
+    pub signing_secret: Option<String>,
+    /// Allowed sender handles (phone numbers) or "*" for all
+    #[serde(default)]
+    pub allowed_senders: Vec<String>,
+}
+
+impl WhatsAppConfig {
+    /// Detect which backend to use based on config fields.
+    /// Returns "cloud" if phone_number_id is set, "web" if session_path is set.
+    pub fn backend_type(&self) -> &'static str {
+        if self.phone_number_id.is_some() {
+            "cloud"
+        } else if self.session_path.is_some() {
+            "web"
+        } else {
+            // Default to Cloud API for backward compatibility
+            "cloud"
+        }
+    }
+
+    /// Check if this is a valid Cloud API config
+    pub fn is_cloud_config(&self) -> bool {
+        self.phone_number_id.is_some() && self.access_token.is_some() && self.verify_token.is_some()
+    }
+
+    /// Check if this is a valid Web config
+    pub fn is_web_config(&self) -> bool {
+        self.session_path.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IrcConfig {
     /// IRC server hostname
     pub server: String,
@@ -2174,7 +2332,7 @@ fn default_irc_port() -> u16 {
 ///
 /// - `websocket` (default) — persistent WSS long-connection; no public URL required.
 /// - `webhook`             — HTTP callback server; requires a public HTTPS endpoint.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum LarkReceiveMode {
     #[default]
@@ -2184,7 +2342,7 @@ pub enum LarkReceiveMode {
 
 /// Lark/Feishu configuration for messaging integration.
 /// Lark is the international version; Feishu is the Chinese version.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LarkConfig {
     /// App ID from Lark/Feishu developer console
     pub app_id: String,
@@ -2214,7 +2372,7 @@ pub struct LarkConfig {
 // ── Security Config ─────────────────────────────────────────────────
 
 /// Security configuration for sandboxing, resource limits, and audit logging
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct SecurityConfig {
     /// Sandbox configuration
     #[serde(default)]
@@ -2230,7 +2388,7 @@ pub struct SecurityConfig {
 }
 
 /// Sandbox configuration for OS-level isolation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxConfig {
     /// Enable sandboxing (None = auto-detect, Some = explicit)
     #[serde(default)]
@@ -2256,7 +2414,7 @@ impl Default for SandboxConfig {
 }
 
 /// Sandbox backend selection
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SandboxBackend {
     /// Auto-detect best available (default)
@@ -2275,7 +2433,7 @@ pub enum SandboxBackend {
 }
 
 /// Resource limits for command execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceLimitsConfig {
     /// Maximum memory in MB per command
     #[serde(default = "default_max_memory_mb")]
@@ -2322,7 +2480,7 @@ impl Default for ResourceLimitsConfig {
 }
 
 /// Audit logging configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuditConfig {
     /// Enable audit logging
     #[serde(default = "default_audit_enabled")]
@@ -2365,7 +2523,7 @@ impl Default for AuditConfig {
 }
 
 /// DingTalk configuration for Stream Mode messaging
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DingTalkConfig {
     /// Client ID (AppKey) from DingTalk developer console
     pub client_id: String,
@@ -2377,7 +2535,7 @@ pub struct DingTalkConfig {
 }
 
 /// QQ Official Bot configuration (Tencent QQ Bot SDK)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct QQConfig {
     /// App ID from QQ Bot developer console
     pub app_id: String,
@@ -2411,6 +2569,7 @@ impl Default for Config {
             scheduler: SchedulerConfig::default(),
             agent: AgentConfig::default(),
             model_routes: Vec::new(),
+            embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
             channels_config: ChannelsConfig::default(),
@@ -2422,6 +2581,7 @@ impl Default for Config {
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),
             http_request: HttpRequestConfig::default(),
+            multimodal: MultimodalConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             identity: IdentityConfig::default(),
@@ -2457,13 +2617,15 @@ fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
     default_dir.join(ACTIVE_WORKSPACE_STATE_FILE)
 }
 
-fn load_persisted_workspace_dirs(default_config_dir: &Path) -> Result<Option<(PathBuf, PathBuf)>> {
+async fn load_persisted_workspace_dirs(
+    default_config_dir: &Path,
+) -> Result<Option<(PathBuf, PathBuf)>> {
     let state_path = active_workspace_state_path(default_config_dir);
     if !state_path.exists() {
         return Ok(None);
     }
 
-    let contents = match fs::read_to_string(&state_path) {
+    let contents = match fs::read_to_string(&state_path).await {
         Ok(contents) => contents,
         Err(error) => {
             tracing::warn!(
@@ -2503,13 +2665,13 @@ fn load_persisted_workspace_dirs(default_config_dir: &Path) -> Result<Option<(Pa
     Ok(Some((config_dir.clone(), config_dir.join("workspace"))))
 }
 
-pub(crate) fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<()> {
+pub(crate) async fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<()> {
     let default_config_dir = default_config_dir()?;
     let state_path = active_workspace_state_path(&default_config_dir);
 
     if config_dir == default_config_dir {
         if state_path.exists() {
-            fs::remove_file(&state_path).with_context(|| {
+            fs::remove_file(&state_path).await.with_context(|| {
                 format!(
                     "Failed to clear active workspace marker: {}",
                     state_path.display()
@@ -2519,12 +2681,14 @@ pub(crate) fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<(
         return Ok(());
     }
 
-    fs::create_dir_all(&default_config_dir).with_context(|| {
-        format!(
-            "Failed to create default config directory: {}",
-            default_config_dir.display()
-        )
-    })?;
+    fs::create_dir_all(&default_config_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to create default config directory: {}",
+                default_config_dir.display()
+            )
+        })?;
 
     let state = ActiveWorkspaceState {
         config_dir: config_dir.to_string_lossy().into_owned(),
@@ -2536,22 +2700,22 @@ pub(crate) fn persist_active_workspace_config_dir(config_dir: &Path) -> Result<(
         ".{ACTIVE_WORKSPACE_STATE_FILE}.tmp-{}",
         uuid::Uuid::new_v4()
     ));
-    fs::write(&temp_path, serialized).with_context(|| {
+    fs::write(&temp_path, serialized).await.with_context(|| {
         format!(
             "Failed to write temporary active workspace marker: {}",
             temp_path.display()
         )
     })?;
 
-    if let Err(error) = fs::rename(&temp_path, &state_path) {
-        let _ = fs::remove_file(&temp_path);
+    if let Err(error) = fs::rename(&temp_path, &state_path).await {
+        let _ = fs::remove_file(&temp_path).await;
         anyhow::bail!(
             "Failed to atomically persist active workspace marker {}: {error}",
             state_path.display()
         );
     }
 
-    sync_directory(&default_config_dir)?;
+    sync_directory(&default_config_dir).await?;
     Ok(())
 }
 
@@ -2584,6 +2748,60 @@ fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf, PathBuf) 
         workspace_config_dir.clone(),
         workspace_config_dir.join("workspace"),
     )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConfigResolutionSource {
+    EnvWorkspace,
+    ActiveWorkspaceMarker,
+    DefaultConfigDir,
+}
+
+impl ConfigResolutionSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::EnvWorkspace => "ZEROCLAW_WORKSPACE",
+            Self::ActiveWorkspaceMarker => "active_workspace.toml",
+            Self::DefaultConfigDir => "default",
+        }
+    }
+}
+
+async fn resolve_runtime_config_dirs(
+    default_zeroclaw_dir: &Path,
+    default_workspace_dir: &Path,
+) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
+    // Resolution priority:
+    // 1. ZEROCLAW_WORKSPACE env override
+    // 2. Persisted active workspace marker from onboarding/custom profile
+    // 3. Default ~/.zeroclaw layout
+    if let Ok(custom_workspace) = std::env::var("ZEROCLAW_WORKSPACE") {
+        if !custom_workspace.is_empty() {
+            let (zeroclaw_dir, workspace_dir) =
+                resolve_config_dir_for_workspace(&PathBuf::from(custom_workspace));
+            return Ok((
+                zeroclaw_dir,
+                workspace_dir,
+                ConfigResolutionSource::EnvWorkspace,
+            ));
+        }
+    }
+
+    if let Some((zeroclaw_dir, workspace_dir)) =
+        load_persisted_workspace_dirs(default_zeroclaw_dir).await?
+    {
+        return Ok((
+            zeroclaw_dir,
+            workspace_dir,
+            ConfigResolutionSource::ActiveWorkspaceMarker,
+        ));
+    }
+
+    Ok((
+        default_zeroclaw_dir.to_path_buf(),
+        default_workspace_dir.to_path_buf(),
+        ConfigResolutionSource::DefaultConfigDir,
+    ))
 }
 
 fn decrypt_optional_secret(
@@ -2621,32 +2839,27 @@ fn encrypt_optional_secret(
 }
 
 impl Config {
-    pub fn load_or_init() -> Result<Self> {
+    pub async fn load_or_init() -> Result<Self> {
         let (default_zeroclaw_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
 
-        // Resolution priority:
-        // 1. ZEROCLAW_WORKSPACE env override
-        // 2. Persisted active workspace marker from onboarding/custom profile
-        // 3. Default ~/.zeroclaw layout
-        let (zeroclaw_dir, workspace_dir) = match std::env::var("ZEROCLAW_WORKSPACE") {
-            Ok(custom_workspace) if !custom_workspace.is_empty() => {
-                resolve_config_dir_for_workspace(&PathBuf::from(custom_workspace))
-            }
-            _ => load_persisted_workspace_dirs(&default_zeroclaw_dir)?
-                .unwrap_or((default_zeroclaw_dir, default_workspace_dir)),
-        };
+        let (zeroclaw_dir, workspace_dir, resolution_source) =
+            resolve_runtime_config_dirs(&default_zeroclaw_dir, &default_workspace_dir).await?;
 
         let config_path = zeroclaw_dir.join("config.toml");
 
-        fs::create_dir_all(&zeroclaw_dir).context("Failed to create config directory")?;
-        fs::create_dir_all(&workspace_dir).context("Failed to create workspace directory")?;
+        fs::create_dir_all(&zeroclaw_dir)
+            .await
+            .context("Failed to create config directory")?;
+        fs::create_dir_all(&workspace_dir)
+            .await
+            .context("Failed to create workspace directory")?;
 
         if config_path.exists() {
             // Warn if config file is world-readable (may contain API keys)
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&config_path) {
+                if let Ok(meta) = fs::metadata(&config_path).await {
                     if meta.permissions().mode() & 0o004 != 0 {
                         tracing::warn!(
                             "Config file {:?} is world-readable (mode {:o}). \
@@ -2659,8 +2872,9 @@ impl Config {
                 }
             }
 
-            let contents =
-                fs::read_to_string(&config_path).context("Failed to read config file")?;
+            let contents = fs::read_to_string(&config_path)
+                .await
+                .context("Failed to read config file")?;
             let mut config: Config =
                 toml::from_str(&contents).context("Failed to parse config file")?;
             // Set computed paths that are skipped during serialization
@@ -2696,21 +2910,35 @@ impl Config {
                 decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
             }
             config.apply_env_overrides();
+            tracing::info!(
+                path = %config.config_path.display(),
+                workspace = %config.workspace_dir.display(),
+                source = resolution_source.as_str(),
+                initialized = false,
+                "Config loaded"
+            );
             Ok(config)
         } else {
             let mut config = Config::default();
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
-            config.save()?;
+            config.save().await?;
 
             // Restrict permissions on newly created config file (may contain API keys)
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600));
+                use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+                let _ = fs::set_permissions(&config_path, Permissions::from_mode(0o600)).await;
             }
 
             config.apply_env_overrides();
+            tracing::info!(
+                path = %config.config_path.display(),
+                workspace = %config.workspace_dir.display(),
+                source = resolution_source.as_str(),
+                initialized = true,
+                "Config loaded"
+            );
             Ok(config)
         }
     }
@@ -2741,11 +2969,21 @@ impl Config {
             }
         }
 
-        // Provider: ZEROCLAW_PROVIDER or PROVIDER
-        if let Ok(provider) =
-            std::env::var("ZEROCLAW_PROVIDER").or_else(|_| std::env::var("PROVIDER"))
-        {
+        // Provider override precedence:
+        // 1) ZEROCLAW_PROVIDER always wins when set.
+        // 2) Legacy PROVIDER is only honored when config still uses the
+        //    default provider (openrouter) or provider is unset. This prevents
+        //    container defaults from overriding explicit custom providers.
+        if let Ok(provider) = std::env::var("ZEROCLAW_PROVIDER") {
             if !provider.is_empty() {
+                self.default_provider = Some(provider);
+            }
+        } else if let Ok(provider) = std::env::var("PROVIDER") {
+            let should_apply_legacy_provider =
+                self.default_provider.as_deref().map_or(true, |configured| {
+                    configured.trim().eq_ignore_ascii_case("openrouter")
+                });
+            if should_apply_legacy_provider && !provider.is_empty() {
                 self.default_provider = Some(provider);
             }
         }
@@ -2794,6 +3032,18 @@ impl Config {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
                 }
+            }
+        }
+
+        // Reasoning override: ZEROCLAW_REASONING_ENABLED or REASONING_ENABLED
+        if let Ok(flag) = std::env::var("ZEROCLAW_REASONING_ENABLED")
+            .or_else(|_| std::env::var("REASONING_ENABLED"))
+        {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.runtime.reasoning_enabled = Some(true),
+                "0" | "false" | "no" | "off" => self.runtime.reasoning_enabled = Some(false),
+                _ => {}
             }
         }
 
@@ -2940,7 +3190,7 @@ impl Config {
         set_runtime_proxy_config(self.proxy.clone());
     }
 
-    pub fn save(&self) -> Result<()> {
+    pub async fn save(&self) -> Result<()> {
         // Encrypt secrets before serialization
         let mut config_to_save = self.clone();
         let zeroclaw_dir = self
@@ -2985,7 +3235,8 @@ impl Config {
             .config_path
             .parent()
             .context("Config path must have a parent directory")?;
-        fs::create_dir_all(parent_dir).with_context(|| {
+
+        fs::create_dir_all(parent_dir).await.with_context(|| {
             format!(
                 "Failed to create config directory: {}",
                 parent_dir.display()
@@ -3004,6 +3255,7 @@ impl Config {
             .create_new(true)
             .write(true)
             .open(&temp_path)
+            .await
             .with_context(|| {
                 format!(
                     "Failed to create temporary config file: {}",
@@ -3012,34 +3264,40 @@ impl Config {
             })?;
         temp_file
             .write_all(toml_str.as_bytes())
+            .await
             .context("Failed to write temporary config contents")?;
         temp_file
             .sync_all()
+            .await
             .context("Failed to fsync temporary config file")?;
         drop(temp_file);
 
         let had_existing_config = self.config_path.exists();
         if had_existing_config {
-            fs::copy(&self.config_path, &backup_path).with_context(|| {
-                format!(
-                    "Failed to create config backup before atomic replace: {}",
-                    backup_path.display()
-                )
-            })?;
+            fs::copy(&self.config_path, &backup_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to create config backup before atomic replace: {}",
+                        backup_path.display()
+                    )
+                })?;
         }
 
-        if let Err(e) = fs::rename(&temp_path, &self.config_path) {
-            let _ = fs::remove_file(&temp_path);
+        if let Err(e) = fs::rename(&temp_path, &self.config_path).await {
+            let _ = fs::remove_file(&temp_path).await;
             if had_existing_config && backup_path.exists() {
-                let _ = fs::copy(&backup_path, &self.config_path);
+                fs::copy(&backup_path, &self.config_path)
+                    .await
+                    .context("Failed to restore config backup")?;
             }
             anyhow::bail!("Failed to atomically replace config file: {e}");
         }
 
-        sync_directory(parent_dir)?;
+        sync_directory(parent_dir).await?;
 
         if had_existing_config {
-            let _ = fs::remove_file(&backup_path);
+            let _ = fs::remove_file(&backup_path).await;
         }
 
         Ok(())
@@ -3047,10 +3305,12 @@ impl Config {
 }
 
 #[cfg(unix)]
-fn sync_directory(path: &Path) -> Result<()> {
+async fn sync_directory(path: &Path) -> Result<()> {
     let dir = File::open(path)
+        .await
         .with_context(|| format!("Failed to open directory for fsync: {}", path.display()))?;
     dir.sync_all()
+        .await
         .with_context(|| format!("Failed to fsync directory metadata: {}", path.display()))?;
     Ok(())
 }
@@ -3063,12 +3323,16 @@ fn sync_directory(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::{fs::Permissions, os::unix::fs::PermissionsExt, path::PathBuf};
+    use tokio::sync::{Mutex, MutexGuard};
+    use tokio::test;
+    use tokio_stream::wrappers::ReadDirStream;
+    use tokio_stream::StreamExt;
 
     // ── Defaults ─────────────────────────────────────────────
 
     #[test]
-    fn config_default_has_sane_values() {
+    async fn config_default_has_sane_values() {
         let c = Config::default();
         assert_eq!(c.default_provider.as_deref(), Some("openrouter"));
         assert!(c.default_model.as_deref().unwrap().contains("claude"));
@@ -3079,13 +3343,45 @@ mod tests {
     }
 
     #[test]
-    fn observability_config_default() {
+    async fn config_schema_export_contains_expected_contract_shape() {
+        let schema = schemars::schema_for!(Config);
+        let schema_json = serde_json::to_value(&schema).expect("schema should serialize to json");
+
+        assert_eq!(
+            schema_json
+                .get("$schema")
+                .and_then(serde_json::Value::as_str),
+            Some("https://json-schema.org/draft/2020-12/schema")
+        );
+
+        let properties = schema_json
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("schema should expose top-level properties");
+
+        assert!(properties.contains_key("default_provider"));
+        assert!(properties.contains_key("gateway"));
+        assert!(properties.contains_key("channels_config"));
+        assert!(!properties.contains_key("workspace_dir"));
+        assert!(!properties.contains_key("config_path"));
+
+        assert!(
+            schema_json
+                .get("$defs")
+                .and_then(serde_json::Value::as_object)
+                .is_some(),
+            "schema should include reusable type definitions"
+        );
+    }
+
+    #[test]
+    async fn observability_config_default() {
         let o = ObservabilityConfig::default();
         assert_eq!(o.backend, "none");
     }
 
     #[test]
-    fn autonomy_config_default() {
+    async fn autonomy_config_default() {
         let a = AutonomyConfig::default();
         assert_eq!(a.level, AutonomyLevel::Supervised);
         assert!(a.workspace_only);
@@ -3099,7 +3395,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_config_default() {
+    async fn runtime_config_default() {
         let r = RuntimeConfig::default();
         assert_eq!(r.kind, "native");
         assert_eq!(r.docker.image, "alpine:3.20");
@@ -3111,21 +3407,21 @@ mod tests {
     }
 
     #[test]
-    fn heartbeat_config_default() {
+    async fn heartbeat_config_default() {
         let h = HeartbeatConfig::default();
         assert!(!h.enabled);
         assert_eq!(h.interval_minutes, 30);
     }
 
     #[test]
-    fn cron_config_default() {
+    async fn cron_config_default() {
         let c = CronConfig::default();
         assert!(c.enabled);
         assert_eq!(c.max_run_history, 50);
     }
 
     #[test]
-    fn cron_config_serde_roundtrip() {
+    async fn cron_config_serde_roundtrip() {
         let c = CronConfig {
             enabled: false,
             max_run_history: 100,
@@ -3137,7 +3433,7 @@ mod tests {
     }
 
     #[test]
-    fn config_defaults_cron_when_section_missing() {
+    async fn config_defaults_cron_when_section_missing() {
         let toml_str = r#"
 workspace_dir = "/tmp/workspace"
 config_path = "/tmp/config.toml"
@@ -3150,7 +3446,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn memory_config_default_hygiene_settings() {
+    async fn memory_config_default_hygiene_settings() {
         let m = MemoryConfig::default();
         assert_eq!(m.backend, "sqlite");
         assert!(m.auto_save);
@@ -3162,7 +3458,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn storage_provider_config_defaults() {
+    async fn storage_provider_config_defaults() {
         let storage = StorageConfig::default();
         assert!(storage.provider.config.provider.is_empty());
         assert!(storage.provider.config.db_url.is_none());
@@ -3172,7 +3468,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn channels_config_default() {
+    async fn channels_config_default() {
         let c = ChannelsConfig::default();
         assert!(c.cli);
         assert!(c.telegram.is_none());
@@ -3182,7 +3478,7 @@ default_temperature = 0.7
     // ── Serde round-trip ─────────────────────────────────────
 
     #[test]
-    fn config_toml_roundtrip() {
+    async fn config_toml_roundtrip() {
         let config = Config {
             workspace_dir: PathBuf::from("/tmp/test/workspace"),
             config_path: PathBuf::from("/tmp/test/config.toml"),
@@ -3214,6 +3510,7 @@ default_temperature = 0.7
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             model_routes: Vec::new(),
+            embedding_routes: Vec::new(),
             query_classification: QueryClassificationConfig::default(),
             heartbeat: HeartbeatConfig {
                 enabled: true,
@@ -3227,6 +3524,7 @@ default_temperature = 0.7
                     allowed_users: vec!["user1".into()],
                     stream_mode: StreamMode::default(),
                     draft_update_interval_ms: default_draft_update_interval_ms(),
+                    interrupt_on_new_message: false,
                     mention_only: false,
                 }),
                 discord: None,
@@ -3237,11 +3535,13 @@ default_temperature = 0.7
                 matrix: None,
                 signal: None,
                 whatsapp: None,
+                linq: None,
                 email: None,
                 irc: None,
                 lark: None,
                 dingtalk: None,
                 qq: None,
+                message_timeout_secs: 300,
             },
             memory: MemoryConfig::default(),
             storage: StorageConfig::default(),
@@ -3251,6 +3551,7 @@ default_temperature = 0.7
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),
             http_request: HttpRequestConfig::default(),
+            multimodal: MultimodalConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             agent: AgentConfig::default(),
@@ -3282,7 +3583,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn config_minimal_toml_uses_defaults() {
+    async fn config_minimal_toml_uses_defaults() {
         let minimal = r#"
 workspace_dir = "/tmp/ws"
 config_path = "/tmp/config.toml"
@@ -3303,7 +3604,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn storage_provider_dburl_alias_deserializes() {
+    async fn storage_provider_dburl_alias_deserializes() {
         let raw = r#"
 default_temperature = 0.7
 
@@ -3330,7 +3631,20 @@ connect_timeout_secs = 12
     }
 
     #[test]
-    fn agent_config_defaults() {
+    async fn runtime_reasoning_enabled_deserializes() {
+        let raw = r#"
+default_temperature = 0.7
+
+[runtime]
+reasoning_enabled = false
+"#;
+
+        let parsed: Config = toml::from_str(raw).unwrap();
+        assert_eq!(parsed.runtime.reasoning_enabled, Some(false));
+    }
+
+    #[test]
+    async fn agent_config_defaults() {
         let cfg = AgentConfig::default();
         assert!(!cfg.compact_context);
         assert_eq!(cfg.max_tool_iterations, 10);
@@ -3340,7 +3654,7 @@ connect_timeout_secs = 12
     }
 
     #[test]
-    fn agent_config_deserializes() {
+    async fn agent_config_deserializes() {
         let raw = r#"
 default_temperature = 0.7
 [agent]
@@ -3358,11 +3672,11 @@ tool_dispatcher = "xml"
         assert_eq!(parsed.agent.tool_dispatcher, "xml");
     }
 
-    #[test]
-    fn config_save_and_load_tmpdir() {
+    #[tokio::test]
+    async fn config_save_and_load_tmpdir() {
         let dir = std::env::temp_dir().join("zeroclaw_test_config");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let _ = fs::remove_dir_all(&dir).await;
+        fs::create_dir_all(&dir).await.unwrap();
 
         let config_path = dir.join("config.toml");
         let config = Config {
@@ -3379,6 +3693,7 @@ tool_dispatcher = "xml"
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             model_routes: Vec::new(),
+            embedding_routes: Vec::new(),
             query_classification: QueryClassificationConfig::default(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
@@ -3391,6 +3706,7 @@ tool_dispatcher = "xml"
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),
             http_request: HttpRequestConfig::default(),
+            multimodal: MultimodalConfig::default(),
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             agent: AgentConfig::default(),
@@ -3401,10 +3717,10 @@ tool_dispatcher = "xml"
             hardware: HardwareConfig::default(),
         };
 
-        config.save().unwrap();
+        config.save().await.unwrap();
         assert!(config_path.exists());
 
-        let contents = fs::read_to_string(&config_path).unwrap();
+        let contents = tokio::fs::read_to_string(&config_path).await.unwrap();
         let loaded: Config = toml::from_str(&contents).unwrap();
         assert!(loaded
             .api_key
@@ -3416,16 +3732,16 @@ tool_dispatcher = "xml"
         assert_eq!(loaded.default_model.as_deref(), Some("test-model"));
         assert!((loaded.default_temperature - 0.9).abs() < f64::EPSILON);
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir).await;
     }
 
-    #[test]
-    fn config_save_encrypts_nested_credentials() {
+    #[tokio::test]
+    async fn config_save_encrypts_nested_credentials() {
         let dir = std::env::temp_dir().join(format!(
             "zeroclaw_test_nested_credentials_{}",
             uuid::Uuid::new_v4()
         ));
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).await.unwrap();
 
         let mut config = Config::default();
         config.workspace_dir = dir.join("workspace");
@@ -3448,9 +3764,11 @@ tool_dispatcher = "xml"
             },
         );
 
-        config.save().unwrap();
+        config.save().await.unwrap();
 
-        let contents = fs::read_to_string(config.config_path.clone()).unwrap();
+        let contents = tokio::fs::read_to_string(config.config_path.clone())
+            .await
+            .unwrap();
         let stored: Config = toml::from_str(&contents).unwrap();
         let store = crate::security::SecretStore::new(&dir, true);
 
@@ -3497,49 +3815,49 @@ tool_dispatcher = "xml"
             "postgres://user:pw@host/db"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir).await;
     }
 
-    #[test]
-    fn config_save_atomic_cleanup() {
+    #[tokio::test]
+    async fn config_save_atomic_cleanup() {
         let dir =
             std::env::temp_dir().join(format!("zeroclaw_test_config_{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).await.unwrap();
 
         let config_path = dir.join("config.toml");
         let mut config = Config::default();
         config.workspace_dir = dir.join("workspace");
         config.config_path = config_path.clone();
         config.default_model = Some("model-a".into());
-
-        config.save().unwrap();
+        config.save().await.unwrap();
         assert!(config_path.exists());
 
         config.default_model = Some("model-b".into());
-        config.save().unwrap();
+        config.save().await.unwrap();
 
-        let contents = fs::read_to_string(&config_path).unwrap();
+        let contents = tokio::fs::read_to_string(&config_path).await.unwrap();
         assert!(contents.contains("model-b"));
 
-        let names: Vec<String> = fs::read_dir(&dir)
-            .unwrap()
+        let names: Vec<String> = ReadDirStream::new(fs::read_dir(&dir).await.unwrap())
             .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
+            .collect()
+            .await;
         assert!(!names.iter().any(|name| name.contains(".tmp-")));
         assert!(!names.iter().any(|name| name.ends_with(".bak")));
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir).await;
     }
 
     // ── Telegram / Discord config ────────────────────────────
 
     #[test]
-    fn telegram_config_serde() {
+    async fn telegram_config_serde() {
         let tc = TelegramConfig {
             bot_token: "123:XYZ".into(),
             allowed_users: vec!["alice".into(), "bob".into()],
             stream_mode: StreamMode::Partial,
             draft_update_interval_ms: 500,
+            interrupt_on_new_message: true,
             mention_only: false,
         };
         let json = serde_json::to_string(&tc).unwrap();
@@ -3548,18 +3866,20 @@ tool_dispatcher = "xml"
         assert_eq!(parsed.allowed_users.len(), 2);
         assert_eq!(parsed.stream_mode, StreamMode::Partial);
         assert_eq!(parsed.draft_update_interval_ms, 500);
+        assert!(parsed.interrupt_on_new_message);
     }
 
     #[test]
-    fn telegram_config_defaults_stream_off() {
+    async fn telegram_config_defaults_stream_off() {
         let json = r#"{"bot_token":"tok","allowed_users":[]}"#;
         let parsed: TelegramConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.stream_mode, StreamMode::Off);
         assert_eq!(parsed.draft_update_interval_ms, 1000);
+        assert!(!parsed.interrupt_on_new_message);
     }
 
     #[test]
-    fn discord_config_serde() {
+    async fn discord_config_serde() {
         let dc = DiscordConfig {
             bot_token: "discord-token".into(),
             guild_id: Some("12345".into()),
@@ -3574,7 +3894,7 @@ tool_dispatcher = "xml"
     }
 
     #[test]
-    fn discord_config_optional_guild() {
+    async fn discord_config_optional_guild() {
         let dc = DiscordConfig {
             bot_token: "tok".into(),
             guild_id: None,
@@ -3590,7 +3910,7 @@ tool_dispatcher = "xml"
     // ── iMessage / Matrix config ────────────────────────────
 
     #[test]
-    fn imessage_config_serde() {
+    async fn imessage_config_serde() {
         let ic = IMessageConfig {
             allowed_contacts: vec!["+1234567890".into(), "user@icloud.com".into()],
         };
@@ -3601,7 +3921,7 @@ tool_dispatcher = "xml"
     }
 
     #[test]
-    fn imessage_config_empty_contacts() {
+    async fn imessage_config_empty_contacts() {
         let ic = IMessageConfig {
             allowed_contacts: vec![],
         };
@@ -3611,7 +3931,7 @@ tool_dispatcher = "xml"
     }
 
     #[test]
-    fn imessage_config_wildcard() {
+    async fn imessage_config_wildcard() {
         let ic = IMessageConfig {
             allowed_contacts: vec!["*".into()],
         };
@@ -3621,7 +3941,7 @@ tool_dispatcher = "xml"
     }
 
     #[test]
-    fn matrix_config_serde() {
+    async fn matrix_config_serde() {
         let mc = MatrixConfig {
             homeserver: "https://matrix.org".into(),
             access_token: "syt_token_abc".into(),
@@ -3641,7 +3961,7 @@ tool_dispatcher = "xml"
     }
 
     #[test]
-    fn matrix_config_toml_roundtrip() {
+    async fn matrix_config_toml_roundtrip() {
         let mc = MatrixConfig {
             homeserver: "https://synapse.local:8448".into(),
             access_token: "tok".into(),
@@ -3657,7 +3977,7 @@ tool_dispatcher = "xml"
     }
 
     #[test]
-    fn matrix_config_backward_compatible_without_session_hints() {
+    async fn matrix_config_backward_compatible_without_session_hints() {
         let toml = r#"
 homeserver = "https://matrix.org"
 access_token = "tok"
@@ -3672,7 +3992,7 @@ allowed_users = ["@ops:matrix.org"]
     }
 
     #[test]
-    fn signal_config_serde() {
+    async fn signal_config_serde() {
         let sc = SignalConfig {
             http_url: "http://127.0.0.1:8686".into(),
             account: "+1234567890".into(),
@@ -3692,7 +4012,7 @@ allowed_users = ["@ops:matrix.org"]
     }
 
     #[test]
-    fn signal_config_toml_roundtrip() {
+    async fn signal_config_toml_roundtrip() {
         let sc = SignalConfig {
             http_url: "http://localhost:8080".into(),
             account: "+9876543210".into(),
@@ -3710,7 +4030,7 @@ allowed_users = ["@ops:matrix.org"]
     }
 
     #[test]
-    fn signal_config_defaults() {
+    async fn signal_config_defaults() {
         let json = r#"{"http_url":"http://127.0.0.1:8686","account":"+1234567890"}"#;
         let parsed: SignalConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.group_id.is_none());
@@ -3720,7 +4040,7 @@ allowed_users = ["@ops:matrix.org"]
     }
 
     #[test]
-    fn channels_config_with_imessage_and_matrix() {
+    async fn channels_config_with_imessage_and_matrix() {
         let c = ChannelsConfig {
             cli: true,
             telegram: None,
@@ -3741,11 +4061,13 @@ allowed_users = ["@ops:matrix.org"]
             }),
             signal: None,
             whatsapp: None,
+            linq: None,
             email: None,
             irc: None,
             lark: None,
             dingtalk: None,
             qq: None,
+            message_timeout_secs: 300,
         };
         let toml_str = toml::to_string_pretty(&c).unwrap();
         let parsed: ChannelsConfig = toml::from_str(&toml_str).unwrap();
@@ -3756,7 +4078,7 @@ allowed_users = ["@ops:matrix.org"]
     }
 
     #[test]
-    fn channels_config_default_has_no_imessage_matrix() {
+    async fn channels_config_default_has_no_imessage_matrix() {
         let c = ChannelsConfig::default();
         assert!(c.imessage.is_none());
         assert!(c.matrix.is_none());
@@ -3765,7 +4087,7 @@ allowed_users = ["@ops:matrix.org"]
     // ── Edge cases: serde(default) for allowed_users ─────────
 
     #[test]
-    fn discord_config_deserializes_without_allowed_users() {
+    async fn discord_config_deserializes_without_allowed_users() {
         // Old configs won't have allowed_users — serde(default) should fill vec![]
         let json = r#"{"bot_token":"tok","guild_id":"123"}"#;
         let parsed: DiscordConfig = serde_json::from_str(json).unwrap();
@@ -3773,28 +4095,28 @@ allowed_users = ["@ops:matrix.org"]
     }
 
     #[test]
-    fn discord_config_deserializes_with_allowed_users() {
+    async fn discord_config_deserializes_with_allowed_users() {
         let json = r#"{"bot_token":"tok","guild_id":"123","allowed_users":["111","222"]}"#;
         let parsed: DiscordConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.allowed_users, vec!["111", "222"]);
     }
 
     #[test]
-    fn slack_config_deserializes_without_allowed_users() {
+    async fn slack_config_deserializes_without_allowed_users() {
         let json = r#"{"bot_token":"xoxb-tok"}"#;
         let parsed: SlackConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.allowed_users.is_empty());
     }
 
     #[test]
-    fn slack_config_deserializes_with_allowed_users() {
+    async fn slack_config_deserializes_with_allowed_users() {
         let json = r#"{"bot_token":"xoxb-tok","allowed_users":["U111"]}"#;
         let parsed: SlackConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.allowed_users, vec!["U111"]);
     }
 
     #[test]
-    fn discord_config_toml_backward_compat() {
+    async fn discord_config_toml_backward_compat() {
         let toml_str = r#"
 bot_token = "tok"
 guild_id = "123"
@@ -3805,7 +4127,7 @@ guild_id = "123"
     }
 
     #[test]
-    fn slack_config_toml_backward_compat() {
+    async fn slack_config_toml_backward_compat() {
         let toml_str = r#"
 bot_token = "xoxb-tok"
 channel_id = "C123"
@@ -3816,14 +4138,14 @@ channel_id = "C123"
     }
 
     #[test]
-    fn webhook_config_with_secret() {
+    async fn webhook_config_with_secret() {
         let json = r#"{"port":8080,"secret":"my-secret-key"}"#;
         let parsed: WebhookConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.secret.as_deref(), Some("my-secret-key"));
     }
 
     #[test]
-    fn webhook_config_without_secret() {
+    async fn webhook_config_without_secret() {
         let json = r#"{"port":8080}"#;
         let parsed: WebhookConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.secret.is_none());
@@ -3833,51 +4155,60 @@ channel_id = "C123"
     // ── WhatsApp config ──────────────────────────────────────
 
     #[test]
-    fn whatsapp_config_serde() {
+    async fn whatsapp_config_serde() {
         let wc = WhatsAppConfig {
-            access_token: "EAABx...".into(),
-            phone_number_id: "123456789".into(),
-            verify_token: "my-verify-token".into(),
+            access_token: Some("EAABx...".into()),
+            phone_number_id: Some("123456789".into()),
+            verify_token: Some("my-verify-token".into()),
             app_secret: None,
+            session_path: None,
+            pair_phone: None,
+            pair_code: None,
             allowed_numbers: vec!["+1234567890".into(), "+9876543210".into()],
         };
         let json = serde_json::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.access_token, "EAABx...");
-        assert_eq!(parsed.phone_number_id, "123456789");
-        assert_eq!(parsed.verify_token, "my-verify-token");
+        assert_eq!(parsed.access_token, Some("EAABx...".into()));
+        assert_eq!(parsed.phone_number_id, Some("123456789".into()));
+        assert_eq!(parsed.verify_token, Some("my-verify-token".into()));
         assert_eq!(parsed.allowed_numbers.len(), 2);
     }
 
     #[test]
-    fn whatsapp_config_toml_roundtrip() {
+    async fn whatsapp_config_toml_roundtrip() {
         let wc = WhatsAppConfig {
-            access_token: "tok".into(),
-            phone_number_id: "12345".into(),
-            verify_token: "verify".into(),
+            access_token: Some("tok".into()),
+            phone_number_id: Some("12345".into()),
+            verify_token: Some("verify".into()),
             app_secret: Some("secret123".into()),
+            session_path: None,
+            pair_phone: None,
+            pair_code: None,
             allowed_numbers: vec!["+1".into()],
         };
         let toml_str = toml::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.phone_number_id, "12345");
+        assert_eq!(parsed.phone_number_id, Some("12345".into()));
         assert_eq!(parsed.allowed_numbers, vec!["+1"]);
     }
 
     #[test]
-    fn whatsapp_config_deserializes_without_allowed_numbers() {
+    async fn whatsapp_config_deserializes_without_allowed_numbers() {
         let json = r#"{"access_token":"tok","phone_number_id":"123","verify_token":"ver"}"#;
         let parsed: WhatsAppConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.allowed_numbers.is_empty());
     }
 
     #[test]
-    fn whatsapp_config_wildcard_allowed() {
+    async fn whatsapp_config_wildcard_allowed() {
         let wc = WhatsAppConfig {
-            access_token: "tok".into(),
-            phone_number_id: "123".into(),
-            verify_token: "ver".into(),
+            access_token: Some("tok".into()),
+            phone_number_id: Some("123".into()),
+            verify_token: Some("ver".into()),
             app_secret: None,
+            session_path: None,
+            pair_phone: None,
+            pair_code: None,
             allowed_numbers: vec!["*".into()],
         };
         let toml_str = toml::to_string(&wc).unwrap();
@@ -3886,7 +4217,7 @@ channel_id = "C123"
     }
 
     #[test]
-    fn channels_config_with_whatsapp() {
+    async fn channels_config_with_whatsapp() {
         let c = ChannelsConfig {
             cli: true,
             telegram: None,
@@ -3898,28 +4229,33 @@ channel_id = "C123"
             matrix: None,
             signal: None,
             whatsapp: Some(WhatsAppConfig {
-                access_token: "tok".into(),
-                phone_number_id: "123".into(),
-                verify_token: "ver".into(),
+                access_token: Some("tok".into()),
+                phone_number_id: Some("123".into()),
+                verify_token: Some("ver".into()),
                 app_secret: None,
+                session_path: None,
+                pair_phone: None,
+                pair_code: None,
                 allowed_numbers: vec!["+1".into()],
             }),
+            linq: None,
             email: None,
             irc: None,
             lark: None,
             dingtalk: None,
             qq: None,
+            message_timeout_secs: 300,
         };
         let toml_str = toml::to_string_pretty(&c).unwrap();
         let parsed: ChannelsConfig = toml::from_str(&toml_str).unwrap();
         assert!(parsed.whatsapp.is_some());
         let wa = parsed.whatsapp.unwrap();
-        assert_eq!(wa.phone_number_id, "123");
+        assert_eq!(wa.phone_number_id, Some("123".into()));
         assert_eq!(wa.allowed_numbers, vec!["+1"]);
     }
 
     #[test]
-    fn channels_config_default_has_no_whatsapp() {
+    async fn channels_config_default_has_no_whatsapp() {
         let c = ChannelsConfig::default();
         assert!(c.whatsapp.is_none());
     }
@@ -3929,13 +4265,13 @@ channel_id = "C123"
     // ══════════════════════════════════════════════════════════
 
     #[test]
-    fn checklist_gateway_default_requires_pairing() {
+    async fn checklist_gateway_default_requires_pairing() {
         let g = GatewayConfig::default();
         assert!(g.require_pairing, "Pairing must be required by default");
     }
 
     #[test]
-    fn checklist_gateway_default_blocks_public_bind() {
+    async fn checklist_gateway_default_blocks_public_bind() {
         let g = GatewayConfig::default();
         assert!(
             !g.allow_public_bind,
@@ -3944,7 +4280,7 @@ channel_id = "C123"
     }
 
     #[test]
-    fn checklist_gateway_default_no_tokens() {
+    async fn checklist_gateway_default_no_tokens() {
         let g = GatewayConfig::default();
         assert!(
             g.paired_tokens.is_empty(),
@@ -3959,7 +4295,7 @@ channel_id = "C123"
     }
 
     #[test]
-    fn checklist_gateway_cli_default_host_is_localhost() {
+    async fn checklist_gateway_cli_default_host_is_localhost() {
         // The CLI default for --host is 127.0.0.1 (checked in main.rs)
         // Here we verify the config default matches
         let c = Config::default();
@@ -3974,7 +4310,7 @@ channel_id = "C123"
     }
 
     #[test]
-    fn checklist_gateway_serde_roundtrip() {
+    async fn checklist_gateway_serde_roundtrip() {
         let g = GatewayConfig {
             port: 3000,
             host: "127.0.0.1".into(),
@@ -4002,7 +4338,7 @@ channel_id = "C123"
     }
 
     #[test]
-    fn checklist_gateway_backward_compat_no_gateway_section() {
+    async fn checklist_gateway_backward_compat_no_gateway_section() {
         // Old configs without [gateway] should get secure defaults
         let minimal = r#"
 workspace_dir = "/tmp/ws"
@@ -4021,7 +4357,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn checklist_autonomy_default_is_workspace_scoped() {
+    async fn checklist_autonomy_default_is_workspace_scoped() {
         let a = AutonomyConfig::default();
         assert!(a.workspace_only, "Default autonomy must be workspace_only");
         assert!(
@@ -4043,7 +4379,7 @@ default_temperature = 0.7
     // ══════════════════════════════════════════════════════════
 
     #[test]
-    fn composio_config_default_disabled() {
+    async fn composio_config_default_disabled() {
         let c = ComposioConfig::default();
         assert!(!c.enabled, "Composio must be disabled by default");
         assert!(c.api_key.is_none(), "No API key by default");
@@ -4051,7 +4387,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn composio_config_serde_roundtrip() {
+    async fn composio_config_serde_roundtrip() {
         let c = ComposioConfig {
             enabled: true,
             api_key: Some("comp-key-123".into()),
@@ -4065,7 +4401,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn composio_config_backward_compat_missing_section() {
+    async fn composio_config_backward_compat_missing_section() {
         let minimal = r#"
 workspace_dir = "/tmp/ws"
 config_path = "/tmp/config.toml"
@@ -4080,9 +4416,20 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn composio_config_partial_toml() {
+    async fn composio_config_partial_toml() {
         let toml_str = r"
 enabled = true
+";
+        let parsed: ComposioConfig = toml::from_str(toml_str).unwrap();
+        assert!(parsed.enabled);
+        assert!(parsed.api_key.is_none());
+        assert_eq!(parsed.entity_id, "default");
+    }
+
+    #[test]
+    async fn composio_config_enable_alias_supported() {
+        let toml_str = r"
+enable = true
 ";
         let parsed: ComposioConfig = toml::from_str(toml_str).unwrap();
         assert!(parsed.enabled);
@@ -4095,13 +4442,13 @@ enabled = true
     // ══════════════════════════════════════════════════════════
 
     #[test]
-    fn secrets_config_default_encrypts() {
+    async fn secrets_config_default_encrypts() {
         let s = SecretsConfig::default();
         assert!(s.encrypt, "Encryption must be enabled by default");
     }
 
     #[test]
-    fn secrets_config_serde_roundtrip() {
+    async fn secrets_config_serde_roundtrip() {
         let s = SecretsConfig { encrypt: false };
         let toml_str = toml::to_string(&s).unwrap();
         let parsed: SecretsConfig = toml::from_str(&toml_str).unwrap();
@@ -4109,7 +4456,7 @@ enabled = true
     }
 
     #[test]
-    fn secrets_config_backward_compat_missing_section() {
+    async fn secrets_config_backward_compat_missing_section() {
         let minimal = r#"
 workspace_dir = "/tmp/ws"
 config_path = "/tmp/config.toml"
@@ -4123,7 +4470,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn config_default_has_composio_and_secrets() {
+    async fn config_default_has_composio_and_secrets() {
         let c = Config::default();
         assert!(!c.composio.enabled);
         assert!(c.composio.api_key.is_none());
@@ -4133,7 +4480,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn browser_config_default_disabled() {
+    async fn browser_config_default_disabled() {
         let b = BrowserConfig::default();
         assert!(!b.enabled);
         assert!(b.allowed_domains.is_empty());
@@ -4150,7 +4497,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn browser_config_serde_roundtrip() {
+    async fn browser_config_serde_roundtrip() {
         let b = BrowserConfig {
             enabled: true,
             allowed_domains: vec!["example.com".into(), "docs.example.com".into()],
@@ -4194,7 +4541,7 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn browser_config_backward_compat_missing_section() {
+    async fn browser_config_backward_compat_missing_section() {
         let minimal = r#"
 workspace_dir = "/tmp/ws"
 config_path = "/tmp/config.toml"
@@ -4207,11 +4554,9 @@ default_temperature = 0.7
 
     // ── Environment variable overrides (Docker support) ─────────
 
-    fn env_override_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static ENV_OVERRIDE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        ENV_OVERRIDE_TEST_LOCK
-            .lock()
-            .expect("env override test lock poisoned")
+    async fn env_override_lock() -> MutexGuard<'static, ()> {
+        static ENV_OVERRIDE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
+        ENV_OVERRIDE_TEST_LOCK.lock().await
     }
 
     fn clear_proxy_env_test_vars() {
@@ -4237,8 +4582,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_api_key() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_api_key() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
         assert!(config.api_key.is_none());
 
@@ -4250,8 +4595,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_api_key_fallback() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_api_key_fallback() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::remove_var("ZEROCLAW_API_KEY");
@@ -4263,8 +4608,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_provider() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_provider() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::set_var("ZEROCLAW_PROVIDER", "anthropic");
@@ -4275,8 +4620,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_provider_fallback() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_provider_fallback() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::remove_var("ZEROCLAW_PROVIDER");
@@ -4288,8 +4633,44 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_glm_api_key_for_regional_aliases() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_provider_fallback_does_not_replace_non_default_provider() {
+        let _env_guard = env_override_lock().await;
+        let mut config = Config {
+            default_provider: Some("custom:https://proxy.example.com/v1".to_string()),
+            ..Config::default()
+        };
+
+        std::env::remove_var("ZEROCLAW_PROVIDER");
+        std::env::set_var("PROVIDER", "openrouter");
+        config.apply_env_overrides();
+        assert_eq!(
+            config.default_provider.as_deref(),
+            Some("custom:https://proxy.example.com/v1")
+        );
+
+        std::env::remove_var("PROVIDER");
+    }
+
+    #[test]
+    async fn env_override_zero_claw_provider_overrides_non_default_provider() {
+        let _env_guard = env_override_lock().await;
+        let mut config = Config {
+            default_provider: Some("custom:https://proxy.example.com/v1".to_string()),
+            ..Config::default()
+        };
+
+        std::env::set_var("ZEROCLAW_PROVIDER", "openrouter");
+        std::env::set_var("PROVIDER", "anthropic");
+        config.apply_env_overrides();
+        assert_eq!(config.default_provider.as_deref(), Some("openrouter"));
+
+        std::env::remove_var("ZEROCLAW_PROVIDER");
+        std::env::remove_var("PROVIDER");
+    }
+
+    #[test]
+    async fn env_override_glm_api_key_for_regional_aliases() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config {
             default_provider: Some("glm-cn".to_string()),
             ..Config::default()
@@ -4303,8 +4684,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_zai_api_key_for_regional_aliases() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_zai_api_key_for_regional_aliases() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config {
             default_provider: Some("zai-cn".to_string()),
             ..Config::default()
@@ -4318,8 +4699,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_model() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_model() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::set_var("ZEROCLAW_MODEL", "gpt-4o");
@@ -4330,8 +4711,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_model_fallback() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_model_fallback() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::remove_var("ZEROCLAW_MODEL");
@@ -4346,8 +4727,8 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn env_override_workspace() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_workspace() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::set_var("ZEROCLAW_WORKSPACE", "/custom/workspace");
@@ -4358,8 +4739,77 @@ default_temperature = 0.7
     }
 
     #[test]
-    fn load_or_init_workspace_override_uses_workspace_root_for_config() {
-        let _env_guard = env_override_test_guard();
+    async fn resolve_runtime_config_dirs_uses_env_workspace_first() {
+        let _env_guard = env_override_lock().await;
+        let default_config_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let default_workspace_dir = default_config_dir.join("workspace");
+        let workspace_dir = default_config_dir.join("profile-a");
+
+        std::env::set_var("ZEROCLAW_WORKSPACE", &workspace_dir);
+        let (config_dir, resolved_workspace_dir, source) =
+            resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
+                .await
+                .unwrap();
+
+        assert_eq!(source, ConfigResolutionSource::EnvWorkspace);
+        assert_eq!(config_dir, workspace_dir);
+        assert_eq!(resolved_workspace_dir, workspace_dir.join("workspace"));
+
+        std::env::remove_var("ZEROCLAW_WORKSPACE");
+        let _ = fs::remove_dir_all(default_config_dir).await;
+    }
+
+    #[test]
+    async fn resolve_runtime_config_dirs_uses_active_workspace_marker() {
+        let _env_guard = env_override_lock().await;
+        let default_config_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let default_workspace_dir = default_config_dir.join("workspace");
+        let marker_config_dir = default_config_dir.join("profiles").join("alpha");
+        let state_path = default_config_dir.join(ACTIVE_WORKSPACE_STATE_FILE);
+
+        std::env::remove_var("ZEROCLAW_WORKSPACE");
+        fs::create_dir_all(&default_config_dir).await.unwrap();
+        let state = ActiveWorkspaceState {
+            config_dir: marker_config_dir.to_string_lossy().into_owned(),
+        };
+        fs::write(&state_path, toml::to_string(&state).unwrap())
+            .await
+            .unwrap();
+
+        let (config_dir, resolved_workspace_dir, source) =
+            resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
+                .await
+                .unwrap();
+
+        assert_eq!(source, ConfigResolutionSource::ActiveWorkspaceMarker);
+        assert_eq!(config_dir, marker_config_dir);
+        assert_eq!(resolved_workspace_dir, marker_config_dir.join("workspace"));
+
+        let _ = fs::remove_dir_all(default_config_dir).await;
+    }
+
+    #[test]
+    async fn resolve_runtime_config_dirs_falls_back_to_default_layout() {
+        let _env_guard = env_override_lock().await;
+        let default_config_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let default_workspace_dir = default_config_dir.join("workspace");
+
+        std::env::remove_var("ZEROCLAW_WORKSPACE");
+        let (config_dir, resolved_workspace_dir, source) =
+            resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
+                .await
+                .unwrap();
+
+        assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
+        assert_eq!(config_dir, default_config_dir);
+        assert_eq!(resolved_workspace_dir, default_workspace_dir);
+
+        let _ = fs::remove_dir_all(default_config_dir).await;
+    }
+
+    #[test]
+    async fn load_or_init_workspace_override_uses_workspace_root_for_config() {
+        let _env_guard = env_override_lock().await;
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("profile-a");
@@ -4368,7 +4818,7 @@ default_temperature = 0.7
         std::env::set_var("HOME", &temp_home);
         std::env::set_var("ZEROCLAW_WORKSPACE", &workspace_dir);
 
-        let config = Config::load_or_init().unwrap();
+        let config = Config::load_or_init().await.unwrap();
 
         assert_eq!(config.workspace_dir, workspace_dir.join("workspace"));
         assert_eq!(config.config_path, workspace_dir.join("config.toml"));
@@ -4380,12 +4830,12 @@ default_temperature = 0.7
         } else {
             std::env::remove_var("HOME");
         }
-        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_home).await;
     }
 
     #[test]
-    fn load_or_init_workspace_suffix_uses_legacy_config_layout() {
-        let _env_guard = env_override_test_guard();
+    async fn load_or_init_workspace_suffix_uses_legacy_config_layout() {
+        let _env_guard = env_override_lock().await;
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("workspace");
@@ -4395,7 +4845,7 @@ default_temperature = 0.7
         std::env::set_var("HOME", &temp_home);
         std::env::set_var("ZEROCLAW_WORKSPACE", &workspace_dir);
 
-        let config = Config::load_or_init().unwrap();
+        let config = Config::load_or_init().await.unwrap();
 
         assert_eq!(config.workspace_dir, workspace_dir);
         assert_eq!(config.config_path, legacy_config_path);
@@ -4407,32 +4857,33 @@ default_temperature = 0.7
         } else {
             std::env::remove_var("HOME");
         }
-        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_home).await;
     }
 
     #[test]
-    fn load_or_init_workspace_override_keeps_existing_legacy_config() {
-        let _env_guard = env_override_test_guard();
+    async fn load_or_init_workspace_override_keeps_existing_legacy_config() {
+        let _env_guard = env_override_lock().await;
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("custom-workspace");
         let legacy_config_dir = temp_home.join(".zeroclaw");
         let legacy_config_path = legacy_config_dir.join("config.toml");
 
-        fs::create_dir_all(&legacy_config_dir).unwrap();
+        fs::create_dir_all(&legacy_config_dir).await.unwrap();
         fs::write(
             &legacy_config_path,
             r#"default_temperature = 0.7
 default_model = "legacy-model"
 "#,
         )
+        .await
         .unwrap();
 
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &temp_home);
         std::env::set_var("ZEROCLAW_WORKSPACE", &workspace_dir);
 
-        let config = Config::load_or_init().unwrap();
+        let config = Config::load_or_init().await.unwrap();
 
         assert_eq!(config.workspace_dir, workspace_dir);
         assert_eq!(config.config_path, legacy_config_path);
@@ -4444,30 +4895,33 @@ default_model = "legacy-model"
         } else {
             std::env::remove_var("HOME");
         }
-        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_home).await;
     }
 
     #[test]
-    fn load_or_init_uses_persisted_active_workspace_marker() {
-        let _env_guard = env_override_test_guard();
+    async fn load_or_init_uses_persisted_active_workspace_marker() {
+        let _env_guard = env_override_lock().await;
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let custom_config_dir = temp_home.join("profiles").join("agent-alpha");
 
-        fs::create_dir_all(&custom_config_dir).unwrap();
+        fs::create_dir_all(&custom_config_dir).await.unwrap();
         fs::write(
             custom_config_dir.join("config.toml"),
             "default_temperature = 0.7\ndefault_model = \"persisted-profile\"\n",
         )
+        .await
         .unwrap();
 
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &temp_home);
         std::env::remove_var("ZEROCLAW_WORKSPACE");
 
-        persist_active_workspace_config_dir(&custom_config_dir).unwrap();
+        persist_active_workspace_config_dir(&custom_config_dir)
+            .await
+            .unwrap();
 
-        let config = Config::load_or_init().unwrap();
+        let config = Config::load_or_init().await.unwrap();
 
         assert_eq!(config.config_path, custom_config_dir.join("config.toml"));
         assert_eq!(config.workspace_dir, custom_config_dir.join("workspace"));
@@ -4478,30 +4932,33 @@ default_model = "legacy-model"
         } else {
             std::env::remove_var("HOME");
         }
-        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_home).await;
     }
 
     #[test]
-    fn load_or_init_env_workspace_override_takes_priority_over_marker() {
-        let _env_guard = env_override_test_guard();
+    async fn load_or_init_env_workspace_override_takes_priority_over_marker() {
+        let _env_guard = env_override_lock().await;
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let marker_config_dir = temp_home.join("profiles").join("persisted-profile");
         let env_workspace_dir = temp_home.join("env-workspace");
 
-        fs::create_dir_all(&marker_config_dir).unwrap();
+        fs::create_dir_all(&marker_config_dir).await.unwrap();
         fs::write(
             marker_config_dir.join("config.toml"),
             "default_temperature = 0.7\ndefault_model = \"marker-model\"\n",
         )
+        .await
         .unwrap();
 
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &temp_home);
-        persist_active_workspace_config_dir(&marker_config_dir).unwrap();
+        persist_active_workspace_config_dir(&marker_config_dir)
+            .await
+            .unwrap();
         std::env::set_var("ZEROCLAW_WORKSPACE", &env_workspace_dir);
 
-        let config = Config::load_or_init().unwrap();
+        let config = Config::load_or_init().await.unwrap();
 
         assert_eq!(config.workspace_dir, env_workspace_dir.join("workspace"));
         assert_eq!(config.config_path, env_workspace_dir.join("config.toml"));
@@ -4512,12 +4969,12 @@ default_model = "legacy-model"
         } else {
             std::env::remove_var("HOME");
         }
-        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_home).await;
     }
 
     #[test]
-    fn persist_active_workspace_marker_is_cleared_for_default_config_dir() {
-        let _env_guard = env_override_test_guard();
+    async fn persist_active_workspace_marker_is_cleared_for_default_config_dir() {
+        let _env_guard = env_override_lock().await;
         let temp_home =
             std::env::temp_dir().join(format!("zeroclaw_test_home_{}", uuid::Uuid::new_v4()));
         let default_config_dir = temp_home.join(".zeroclaw");
@@ -4527,10 +4984,14 @@ default_model = "legacy-model"
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &temp_home);
 
-        persist_active_workspace_config_dir(&custom_config_dir).unwrap();
+        persist_active_workspace_config_dir(&custom_config_dir)
+            .await
+            .unwrap();
         assert!(marker_path.exists());
 
-        persist_active_workspace_config_dir(&default_config_dir).unwrap();
+        persist_active_workspace_config_dir(&default_config_dir)
+            .await
+            .unwrap();
         assert!(!marker_path.exists());
 
         if let Some(home) = original_home {
@@ -4538,12 +4999,12 @@ default_model = "legacy-model"
         } else {
             std::env::remove_var("HOME");
         }
-        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_home).await;
     }
 
     #[test]
-    fn env_override_empty_values_ignored() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_empty_values_ignored() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
         let original_provider = config.default_provider.clone();
 
@@ -4555,8 +5016,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_gateway_port() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_gateway_port() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
         assert_eq!(config.gateway.port, 3000);
 
@@ -4568,8 +5029,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_port_fallback() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_port_fallback() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::remove_var("ZEROCLAW_GATEWAY_PORT");
@@ -4581,8 +5042,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_gateway_host() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_gateway_host() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
         assert_eq!(config.gateway.host, "127.0.0.1");
 
@@ -4594,8 +5055,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_host_fallback() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_host_fallback() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::remove_var("ZEROCLAW_GATEWAY_HOST");
@@ -4607,8 +5068,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_temperature() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_temperature() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::set_var("ZEROCLAW_TEMPERATURE", "0.5");
@@ -4619,8 +5080,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_temperature_out_of_range_ignored() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_temperature_out_of_range_ignored() {
+        let _env_guard = env_override_lock().await;
         // Clean up any leftover env vars from other tests
         std::env::remove_var("ZEROCLAW_TEMPERATURE");
 
@@ -4639,8 +5100,38 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_invalid_port_ignored() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_reasoning_enabled() {
+        let _env_guard = env_override_lock().await;
+        let mut config = Config::default();
+        assert_eq!(config.runtime.reasoning_enabled, None);
+
+        std::env::set_var("ZEROCLAW_REASONING_ENABLED", "false");
+        config.apply_env_overrides();
+        assert_eq!(config.runtime.reasoning_enabled, Some(false));
+
+        std::env::set_var("ZEROCLAW_REASONING_ENABLED", "true");
+        config.apply_env_overrides();
+        assert_eq!(config.runtime.reasoning_enabled, Some(true));
+
+        std::env::remove_var("ZEROCLAW_REASONING_ENABLED");
+    }
+
+    #[test]
+    async fn env_override_reasoning_invalid_value_ignored() {
+        let _env_guard = env_override_lock().await;
+        let mut config = Config::default();
+        config.runtime.reasoning_enabled = Some(false);
+
+        std::env::set_var("ZEROCLAW_REASONING_ENABLED", "maybe");
+        config.apply_env_overrides();
+        assert_eq!(config.runtime.reasoning_enabled, Some(false));
+
+        std::env::remove_var("ZEROCLAW_REASONING_ENABLED");
+    }
+
+    #[test]
+    async fn env_override_invalid_port_ignored() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
         let original_port = config.gateway.port;
 
@@ -4652,8 +5143,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_web_search_config() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_web_search_config() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::set_var("WEB_SEARCH_ENABLED", "false");
@@ -4681,8 +5172,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_web_search_invalid_values_ignored() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_web_search_invalid_values_ignored() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
         let original_max_results = config.web_search.max_results;
         let original_timeout = config.web_search.timeout_secs;
@@ -4700,8 +5191,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_storage_provider_config() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_storage_provider_config() {
+        let _env_guard = env_override_lock().await;
         let mut config = Config::default();
 
         std::env::set_var("ZEROCLAW_STORAGE_PROVIDER", "postgres");
@@ -4726,7 +5217,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn proxy_config_scope_services_requires_entries_when_enabled() {
+    async fn proxy_config_scope_services_requires_entries_when_enabled() {
         let proxy = ProxyConfig {
             enabled: true,
             http_proxy: Some("http://127.0.0.1:7890".into()),
@@ -4742,8 +5233,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_proxy_scope_services() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_proxy_scope_services() {
+        let _env_guard = env_override_lock().await;
         clear_proxy_env_test_vars();
 
         let mut config = Config::default();
@@ -4771,8 +5262,8 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn env_override_proxy_scope_environment_applies_process_env() {
-        let _env_guard = env_override_test_guard();
+    async fn env_override_proxy_scope_environment_applies_process_env() {
+        let _env_guard = env_override_lock().await;
         clear_proxy_env_test_vars();
 
         let mut config = Config::default();
@@ -4808,7 +5299,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn runtime_proxy_client_cache_reuses_default_profile_key() {
+    async fn runtime_proxy_client_cache_reuses_default_profile_key() {
         let service_key = format!(
             "provider.cache_test.{}",
             std::time::SystemTime::now()
@@ -4829,7 +5320,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn set_runtime_proxy_config_clears_runtime_proxy_client_cache() {
+    async fn set_runtime_proxy_config_clears_runtime_proxy_client_cache() {
         let service_key = format!(
             "provider.cache_timeout_test.{}",
             std::time::SystemTime::now()
@@ -4848,7 +5339,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn gateway_config_default_values() {
+    async fn gateway_config_default_values() {
         let g = GatewayConfig::default();
         assert_eq!(g.port, 3000);
         assert_eq!(g.host, "127.0.0.1");
@@ -4863,14 +5354,14 @@ default_model = "legacy-model"
     // ── Peripherals config ───────────────────────────────────────
 
     #[test]
-    fn peripherals_config_default_disabled() {
+    async fn peripherals_config_default_disabled() {
         let p = PeripheralsConfig::default();
         assert!(!p.enabled);
         assert!(p.boards.is_empty());
     }
 
     #[test]
-    fn peripheral_board_config_defaults() {
+    async fn peripheral_board_config_defaults() {
         let b = PeripheralBoardConfig::default();
         assert!(b.board.is_empty());
         assert_eq!(b.transport, "serial");
@@ -4879,7 +5370,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn peripherals_config_toml_roundtrip() {
+    async fn peripherals_config_toml_roundtrip() {
         let p = PeripheralsConfig {
             enabled: true,
             boards: vec![PeripheralBoardConfig {
@@ -4899,7 +5390,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn lark_config_serde() {
+    async fn lark_config_serde() {
         let lc = LarkConfig {
             app_id: "cli_123456".into(),
             app_secret: "secret_abc".into(),
@@ -4921,7 +5412,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn lark_config_toml_roundtrip() {
+    async fn lark_config_toml_roundtrip() {
         let lc = LarkConfig {
             app_id: "cli_123456".into(),
             app_secret: "secret_abc".into(),
@@ -4940,7 +5431,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn lark_config_deserializes_without_optional_fields() {
+    async fn lark_config_deserializes_without_optional_fields() {
         let json = r#"{"app_id":"cli_123","app_secret":"secret"}"#;
         let parsed: LarkConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.encrypt_key.is_none());
@@ -4950,7 +5441,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn lark_config_defaults_to_lark_endpoint() {
+    async fn lark_config_defaults_to_lark_endpoint() {
         let json = r#"{"app_id":"cli_123","app_secret":"secret"}"#;
         let parsed: LarkConfig = serde_json::from_str(json).unwrap();
         assert!(
@@ -4960,7 +5451,7 @@ default_model = "legacy-model"
     }
 
     #[test]
-    fn lark_config_with_wildcard_allowed_users() {
+    async fn lark_config_with_wildcard_allowed_users() {
         let json = r#"{"app_id":"cli_123","app_secret":"secret","allowed_users":["*"]}"#;
         let parsed: LarkConfig = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.allowed_users, vec!["*"]);
@@ -4970,21 +5461,21 @@ default_model = "legacy-model"
 
     #[cfg(unix)]
     #[test]
-    fn new_config_file_has_restricted_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
+    async fn new_config_file_has_restricted_permissions() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config_path = tmp.path().join("config.toml");
 
         // Create a config and save it
         let mut config = Config::default();
         config.config_path = config_path.clone();
-        config.save().unwrap();
+        config.save().await.unwrap();
 
         // Apply the same permission logic as load_or_init
-        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
+        fs::set_permissions(&config_path, Permissions::from_mode(0o600))
+            .await
+            .expect("Failed to set permissions");
 
-        let meta = std::fs::metadata(&config_path).unwrap();
+        let meta = fs::metadata(&config_path).await.unwrap();
         let mode = meta.permissions().mode() & 0o777;
         assert_eq!(
             mode, 0o600,
@@ -4994,7 +5485,7 @@ default_model = "legacy-model"
 
     #[cfg(unix)]
     #[test]
-    fn world_readable_config_is_detectable() {
+    async fn world_readable_config_is_detectable() {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::TempDir::new().unwrap();
