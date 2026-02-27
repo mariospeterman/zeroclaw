@@ -1,0 +1,26 @@
+{
+  "name": "right-hand-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:tauri": "node ./scripts/dev-tauri.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "node ./scripts/tauri-cli.mjs",
+    "android:dev": "npm run tauri -- android dev",
+    "android:studio": "npm run tauri -- android dev --open",
+    "android:run": "npm run tauri -- android run",
+    "android:build:debug": "npm run tauri -- android build -- --debug --apk -t x86_64 -t aarch64",
+    "android:reset-lock": "bash ./scripts/android-reset-lock.sh"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "cross-env": "^7.0.3",
+    "vite": "^5.4.0"
+  }
+}

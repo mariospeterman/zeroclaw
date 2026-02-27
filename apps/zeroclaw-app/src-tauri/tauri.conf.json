@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Right Hand",
+  "version": "0.1.0",
+  "identifier": "com.righthand.app",
+  "build": {
+    "beforeDevCommand": "npm run dev:tauri",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Right Hand",
+        "width": 1200,
+        "height": 780,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  },
+  "plugins": {
+    "notification": null,
+    "shell": {
+      "open": true
+    }
+  }
+}

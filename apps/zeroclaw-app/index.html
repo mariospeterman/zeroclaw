@@ -1,0 +1,1180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Right Hand Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <p class="eyebrow">Right Hand</p>
+          <h1>Command Center</h1>
+          <p id="status">Initializing runtime bridge...</p>
+        </div>
+
+        <div class="topbar-center">
+          <span id="runtime-state" class="state-pill">State: unknown</span>
+          <span class="state-meta" id="runtime-mode">Runtime mode: detecting...</span>
+        </div>
+
+        <div class="topbar-right">
+          <article class="profile-chip" aria-label="Active profile">
+            <span id="profile-avatar" class="profile-avatar" aria-hidden="true">?</span>
+            <span class="profile-copy">
+              <strong id="profile-display-name">Profile</strong>
+              <small id="profile-display-meta">-</small>
+            </span>
+          </article>
+          <select id="profile-select" class="profile-select" aria-label="Select profile"></select>
+          <button
+            id="profile-switch"
+            type="button"
+            class="icon-btn secondary-btn"
+            aria-label="Switch profile"
+            data-tip="Switch profile"
+          >
+            <span aria-hidden="true">⇄</span>
+            <span class="sr-only">Switch profile</span>
+          </button>
+          <button id="open-settings" type="button" class="icon-btn secondary-btn" aria-label="Open settings" data-tip="Settings">
+            <span aria-hidden="true">⚙</span>
+            <span class="sr-only">Open settings</span>
+          </button>
+          <button id="open-tools" type="button" class="icon-btn secondary-btn" aria-label="Open team tools" data-tip="Team tools">
+            <span aria-hidden="true">◫</span>
+            <span class="sr-only">Open team tools</span>
+          </button>
+          <button id="open-mission" type="button" class="icon-btn secondary-btn" aria-label="Open mission control" data-tip="Mission">
+            <span aria-hidden="true">⌂</span>
+            <span class="sr-only">Open mission control</span>
+          </button>
+          <button id="runtime-start" type="button" class="icon-btn" aria-label="Start runtime" data-tip="Start runtime">
+            <span aria-hidden="true">▶</span>
+            <span class="sr-only">Start runtime</span>
+          </button>
+          <button id="runtime-stop" type="button" class="icon-btn" aria-label="Stop runtime" data-tip="Stop runtime">
+            <span aria-hidden="true">■</span>
+            <span class="sr-only">Stop runtime</span>
+          </button>
+          <button id="refresh-handshake" type="button" class="icon-btn secondary-btn" aria-label="Sync status" data-tip="Sync status">
+            <span aria-hidden="true">↻</span>
+            <span class="sr-only">Sync status</span>
+          </button>
+          <button id="theme-toggle" type="button" class="icon-btn secondary-btn" aria-label="Toggle theme" data-tip="Toggle theme">
+            <span aria-hidden="true">◐</span>
+            <span class="sr-only">Toggle theme</span>
+          </button>
+        </div>
+
+        <div class="topbar-hud">
+          <div class="global-hud-head">
+          <p class="eyebrow">Control HUD</p>
+          <button
+            type="button"
+            class="help-trigger mini-help"
+            data-help="hud"
+            data-tooltip="Always-on workspace, runtime, risk and rollout snapshot."
+            aria-label="Control HUD help"
+          >
+            ?
+          </button>
+          </div>
+          <div class="global-hud-grid">
+            <article class="metric"><span>Active Workspace</span><strong id="mission-hud-workspace">-</strong></article>
+            <article class="metric"><span>Runtime</span><strong id="mission-hud-runtime">unknown</strong></article>
+            <article class="metric"><span>Role</span><strong id="mission-hud-role">-</strong></article>
+            <article class="metric"><span>Approvals</span><strong id="mission-hud-approvals">0</strong></article>
+            <article class="metric"><span>Open Tasks</span><strong id="mission-hud-open-tasks">0</strong></article>
+            <article class="metric"><span>Receipts</span><strong id="mission-hud-receipts">0</strong></article>
+            <article class="metric"><span>Compliance</span><strong id="mission-kpi-compliance">0%</strong></article>
+            <article class="metric"><span>Solved</span><strong id="mission-kpi-outcome">0%</strong></article>
+            <article class="metric"><span>Ring</span><strong id="mission-kpi-rollout">pilot</strong></article>
+          </div>
+        </div>
+      </header>
+
+      <section class="setup-stepper" aria-label="Guided setup">
+        <div class="stepper-head">
+          <p class="eyebrow">Guided Flow</p>
+          <p id="stepper-progress" class="stepper-progress">Step 1 of 6</p>
+          <p id="setup-gate-note" class="gate-note is-hidden"></p>
+        </div>
+        <div class="stepper-track">
+          <button class="step-chip is-active" data-route-target="profile" type="button">1. Setup</button>
+          <button class="step-chip" data-route-target="keys" type="button">2. Keys</button>
+          <button class="step-chip" data-route-target="safety" type="button">3. Safety</button>
+          <button class="step-chip" data-route-target="channels" type="button">4. Team Tools</button>
+          <button class="step-chip" data-route-target="runtime" type="button">5. Runtime Ops</button>
+          <button class="step-chip" data-route-target="mission" type="button">6. Mission Control</button>
+        </div>
+        <div class="stepper-controls">
+          <button id="stepper-prev" type="button">Back</button>
+          <button id="stepper-next" type="button">Next</button>
+        </div>
+      </section>
+
+      <section class="command-grid">
+        <section class="main-canvas" id="main-canvas">
+          <div class="flow-column">
+            <article class="panel now-card">
+              <h2>Now</h2>
+              <p class="panel-note">Live agent execution, message loop, and immediate next action.</p>
+              <div class="inline-row">
+                <button id="runtime-refresh" type="button">Refresh State</button>
+              </div>
+              <form id="runtime-message-form" class="stack">
+                <label for="runtime-message">Send runtime message</label>
+                <textarea id="runtime-message" rows="2" placeholder="Run health check and summarize current status"></textarea>
+                <button type="submit">Send</button>
+              </form>
+              <pre id="runtime-output"></pre>
+            </article>
+
+            <article class="panel timeline-card">
+              <h2>Process Timeline</h2>
+              <p class="panel-note">Event stream from runtime and control actions.</p>
+              <pre id="activity-output"></pre>
+            </article>
+
+            <article class="panel logtail" id="logs-panel">
+              <h2>Terminal Tail</h2>
+              <div class="inline-row">
+                <button id="logs-refresh" type="button">Refresh Tail</button>
+                <button id="logs-export" type="button">Export Diagnostics</button>
+              </div>
+              <pre id="logs-output"></pre>
+            </article>
+          </div>
+
+          <aside class="hud-column">
+            <article class="panel hud-metrics">
+              <h2>Live HUD</h2>
+              <div class="metric-grid">
+                <article class="metric"><span>Runtime</span><strong id="metric-runtime">unknown</strong></article>
+                <article class="metric"><span>Integrations</span><strong id="metric-integrations">0</strong></article>
+                <article class="metric"><span>Skills</span><strong id="metric-skills">0</strong></article>
+                <article class="metric"><span>Tool Connectors</span><strong id="metric-mcp">0</strong></article>
+                <article class="metric"><span>Approvals</span><strong id="metric-approvals">0</strong></article>
+                <article class="metric"><span>Receipts</span><strong id="metric-receipts">0</strong></article>
+                <article class="metric"><span>Log lines</span><strong id="metric-log-lines">0</strong></article>
+              </div>
+            </article>
+
+            <article class="panel">
+              <h2>Compatibility</h2>
+              <p class="panel-note">Core protocol and schema compatibility handshake.</p>
+              <pre id="handshake-output"></pre>
+            </article>
+
+            <article class="panel">
+              <h2>Quick Access</h2>
+              <p class="panel-note">Mobile shortcuts</p>
+              <div class="quick-links">
+                <a href="#main-canvas">Command Center</a>
+                <a href="#dock-channels">Integrations</a>
+                <a href="#logs-panel">Logs</a>
+              </div>
+            </article>
+          </aside>
+        </section>
+
+        <aside class="dock">
+          <div class="dock-body">
+            <section class="dock-tab" data-route="profile" data-view-scope="shared">
+              <h2>Setup <button type="button" class="help-trigger mini-help" data-help="setup" data-tooltip="Identity, deployment mode, provider/model, memory baseline.">?</button></h2>
+              <p class="panel-note">
+                Complete this once per workspace, then run daily operations from Mission Control.
+              </p>
+              <p class="panel-note">
+                Host mode is your primary runtime node. Client mode is a companion control app for approvals, alerts, and
+                lightweight actions.
+              </p>
+              <article class="card">
+                <header>
+                  <strong>Setup Checklist</strong>
+                  <span class="pill">Required</span>
+                </header>
+                <p>1) Who is operating this workspace.</p>
+                <p>2) Which role they have (admin/manager/user/observer).</p>
+                <p>3) Which model provider + model this workspace runs.</p>
+                <p>4) Which memory backend and runtime defaults are enforced.</p>
+              </article>
+              <article id="setup-complete-summary" class="card setup-summary-card is-hidden">
+                <header>
+                  <strong>Setup complete</strong>
+                  <span class="pill enabled">Ready</span>
+                </header>
+                <p id="setup-complete-summary-text">Provider/model and policy baseline are configured.</p>
+                <div class="card-actions">
+                  <button id="setup-editor-toggle" type="button" class="secondary-btn">Edit setup</button>
+                  <button id="setup-go-mission" type="button">Open Mission</button>
+                </div>
+              </article>
+
+              <div id="setup-editor">
+
+              <form id="profile-create-form" class="inline-row">
+                <label class="field field-inline" for="profile-name">
+                  <span>Workspace Name</span>
+                  <input id="profile-name" name="profile-name" placeholder="e.g. Finance Production" required />
+                </label>
+                <button type="submit">Create</button>
+              </form>
+
+              <form id="setup-form" class="grid-form setup-grid">
+                <label class="field" for="setup-user-name">
+                  <span>Primary Operator Name</span>
+                  <input id="setup-user-name" placeholder="e.g. Alex Chen" required />
+                  <small>Used in approvals and audit receipts.</small>
+                </label>
+                <label class="field" for="setup-agent-name">
+                  <span>Agent Display Name</span>
+                  <input id="setup-agent-name" placeholder="e.g. Right Hand" required />
+                  <small>The visible name of this workspace assistant.</small>
+                </label>
+                <label class="field" for="setup-workspace-mode">
+                  <span>Workspace Mode</span>
+                  <select id="setup-workspace-mode">
+                    <option value="workspace">Organization Workspace (recommended)</option>
+                  </select>
+                  <small>Single default workspace model for one team or one person.</small>
+                </label>
+                <label class="field" for="setup-deployment-mode">
+                  <span>Deployment Mode</span>
+                  <select id="setup-deployment-mode">
+                    <option value="host">Host (linux/macos/windows runtime node)</option>
+                    <option value="client">Client (macos/windows/android/ios companion)</option>
+                  </select>
+                  <small>Host runs runtime. Client connects to host and controls workflows.</small>
+                </label>
+                <label class="field" for="setup-workspace-role">
+                  <span>Workspace Role</span>
+                  <select id="setup-workspace-role">
+                    <option value="admin">admin</option>
+                    <option value="manager">manager</option>
+                    <option value="user">user</option>
+                    <option value="observer">observer</option>
+                  </select>
+                  <small>Permissions baseline for this workspace profile.</small>
+                </label>
+                <label class="field" for="setup-subscription-tier">
+                  <span>Subscription Tier</span>
+                  <select id="setup-subscription-tier">
+                    <option value="basic">basic (monthly)</option>
+                    <option value="professional">professional (monthly)</option>
+                    <option value="enterprise">enterprise (monthly)</option>
+                  </select>
+                  <small>Controls entitlement checks in Mission Control.</small>
+                </label>
+                <label class="field" for="setup-orchestrator-mode">
+                  <span>Agent Pattern</span>
+                  <select id="setup-orchestrator-mode">
+                    <option value="single_orchestrator">Single orchestrator per workspace (recommended)</option>
+                  </select>
+                  <small>Use sub-agents for specialization, keep one top-level orchestrator.</small>
+                </label>
+                <label class="field" for="setup-provider">
+                  <span>Model Provider</span>
+                  <input
+                    id="setup-provider"
+                    list="setup-provider-options"
+                    placeholder="choose provider preset (or type custom provider id)"
+                    required
+                  />
+                  <small id="setup-provider-guidance">
+                    Pick a provider preset. Key ID and key setup guidance will auto-populate in Keys.
+                  </small>
+                </label>
+                <datalist id="setup-provider-options"></datalist>
+                <label class="field" for="setup-model">
+                  <span>Default Model</span>
+                  <input id="setup-model" list="setup-model-options" placeholder="choose preset or type model id" required />
+                  <small>Set the model used by the orchestrator by default.</small>
+                </label>
+                <datalist id="setup-model-options">
+                  <option value="anthropic/claude-sonnet-4"></option>
+                  <option value="anthropic/claude-opus-4"></option>
+                  <option value="openai/gpt-4.1"></option>
+                  <option value="openai/gpt-4o"></option>
+                  <option value="google/gemini-2.5-pro"></option>
+                  <option value="meta-llama/llama-3.1-70b-instruct"></option>
+                </datalist>
+                <label class="field" for="setup-api-key">
+                  <span>Provider API Key (optional quick set)</span>
+                  <input id="setup-api-key" type="password" placeholder="stored securely in vault" />
+                  <small>Can also be set in Keys step using key id <code>provider.&lt;name&gt;.api_key</code>.</small>
+                </label>
+                <label class="field" for="setup-api-url">
+                  <span>Provider API URL Override (Optional)</span>
+                  <input id="setup-api-url" placeholder="https://api.example.com/v1" />
+                </label>
+                <label class="field" for="setup-default-temperature">
+                  <span>Default Temperature</span>
+                  <input id="setup-default-temperature" type="number" min="0" max="2" step="0.1" value="0.7" />
+                </label>
+                <label class="field" for="setup-memory">
+                  <span>Memory Backend</span>
+                  <select id="setup-memory">
+                    <option value="sqlite">sqlite</option>
+                    <option value="markdown">markdown</option>
+                    <option value="lucid">lucid</option>
+                    <option value="none">none</option>
+                  </select>
+                </label>
+                <label class="field" for="setup-runtime-reasoning-enabled">
+                  <span>Reasoning</span>
+                  <select id="setup-runtime-reasoning-enabled">
+                    <option value="auto">provider default</option>
+                    <option value="enabled">enabled</option>
+                    <option value="disabled">disabled</option>
+                  </select>
+                </label>
+                <label class="field field-checkbox" for="setup-enable-tool-connectors">
+                  <input id="setup-enable-tool-connectors" type="checkbox" />
+                  <span>Enable External Tool Connectors (MCP)</span>
+                  <small>Leave off unless this workspace needs external MCP tools.</small>
+                </label>
+                <details class="inline-details">
+                  <summary>Advanced Runtime Settings (optional)</summary>
+                  <div class="grid-form setup-grid setup-grid-advanced">
+                    <label class="field field-checkbox" for="setup-agent-compact-context">
+                      <input id="setup-agent-compact-context" type="checkbox" />
+                      <span>Compact Context Window</span>
+                    </label>
+                    <label class="field field-checkbox" for="setup-agent-parallel-tools">
+                      <input id="setup-agent-parallel-tools" type="checkbox" />
+                      <span>Parallel Tool Calls</span>
+                    </label>
+                    <label class="field" for="setup-agent-max-tool-iterations">
+                      <span>Max Tool Iterations</span>
+                      <input id="setup-agent-max-tool-iterations" type="number" min="1" value="10" />
+                    </label>
+                    <label class="field" for="setup-agent-max-history-messages">
+                      <span>Max History Messages</span>
+                      <input id="setup-agent-max-history-messages" type="number" min="1" value="50" />
+                    </label>
+                    <label class="field" for="setup-agent-tool-dispatcher">
+                      <span>Tool Dispatcher</span>
+                      <input id="setup-agent-tool-dispatcher" value="auto" placeholder="auto" />
+                    </label>
+                    <label class="field" for="setup-skills-prompt-injection-mode">
+                      <span>Skills Prompt Injection Mode</span>
+                      <select id="setup-skills-prompt-injection-mode">
+                        <option value="full">full</option>
+                        <option value="compact">compact</option>
+                      </select>
+                    </label>
+                    <label class="field field-checkbox" for="setup-skills-open-enabled">
+                      <input id="setup-skills-open-enabled" type="checkbox" />
+                      <span>Enable Open Skills Directory</span>
+                    </label>
+                    <label class="field" for="setup-skills-open-dir">
+                      <span>Open Skills Directory</span>
+                      <input id="setup-skills-open-dir" placeholder="skills.open_skills_dir (optional)" />
+                    </label>
+                    <label class="field field-full" for="setup-delegate-agents-json">
+                      <span>Delegate Agents JSON</span>
+                      <textarea
+                        id="setup-delegate-agents-json"
+                        rows="6"
+                        placeholder='{"reviewer":{"provider":"openrouter","model":"anthropic/claude-sonnet-4","system_prompt":"You review changes","temperature":0.2,"max_depth":2,"agentic":false,"allowed_tools":["file_read"],"max_iterations":8}}'
+                      ></textarea>
+                    </label>
+                  </div>
+                </details>
+                <div class="form-actions">
+                  <button type="submit">Save Setup</button>
+                </div>
+              </form>
+
+              <pre id="setup-agents-summary"></pre>
+              <pre id="setup-output"></pre>
+              </div>
+
+              <h3>Connect to Host</h3>
+              <p class="panel-note">
+                For client mode: paste a host invite payload and attach this client to the host workspace.
+              </p>
+              <div class="inline-row">
+                <button id="connect-generate-invite" type="button">Generate Invite</button>
+                <button id="connect-attach-host" type="button">Attach Client</button>
+                <button id="connect-refresh-state" type="button">Refresh Connection</button>
+              </div>
+              <textarea
+                id="connect-invite-payload"
+                rows="4"
+                placeholder='Paste pairing bundle JSON from host (or use "Generate Invite" in host mode).'
+              ></textarea>
+              <pre id="connect-output"></pre>
+            </section>
+
+            <section class="dock-tab is-hidden" data-route="keys" data-view-scope="shared">
+              <h2>Keys <button type="button" class="help-trigger mini-help" data-help="keys" data-tooltip="Store provider/integration secrets by key ID in secure vault.">?</button></h2>
+              <p class="panel-note">Store secrets by key ID. Runtime and tools only use key IDs, never raw secrets.</p>
+              <article class="card">
+                <header>
+                  <strong>Quick Provider Key Setup</strong>
+                </header>
+                <p>1) Pick a provider key preset.</p>
+                <p>2) Paste the provider secret and save.</p>
+                <p>3) Runtime/tools reference only key IDs, never raw keys.</p>
+              </article>
+              <div class="inline-row">
+                <label class="field field-inline" for="secret-key-template">
+                  <span>Provider Key Preset</span>
+                  <select id="secret-key-template">
+                    <option value="">Select provider preset</option>
+                  </select>
+                </label>
+                <button id="secret-apply-template" type="button" class="secondary-btn">Use Preset</button>
+              </div>
+              <p id="secret-provider-guidance" class="field-hint">
+                Select a provider preset to auto-fill key ID and open provider key setup docs.
+              </p>
+              <p class="field-hint">
+                Security note: for production/regulatory workloads, use provider account controls for no-training/no-retention where available, scoped project keys, and key rotation.
+              </p>
+              <label class="field field-checkbox" for="secret-advanced-toggle">
+                <input id="secret-advanced-toggle" type="checkbox" />
+                <span>Advanced: custom key ID</span>
+                <small>Off by default. Keep disabled for standard provider preset setup.</small>
+              </label>
+              <div class="inline-row">
+                <label class="field field-inline" for="secret-key">
+                  <span>Key ID</span>
+                  <input id="secret-key" placeholder="provider.openrouter.api_key" readonly />
+                </label>
+                <label class="field field-inline" for="secret-value">
+                  <span>Secret Value</span>
+                  <input id="secret-value" type="password" placeholder="paste secret value" />
+                </label>
+              </div>
+              <div class="inline-row">
+                <button id="secret-save" type="button">Save Key</button>
+                <button id="secret-check" type="button">Check Key</button>
+                <button id="secret-delete" type="button">Delete Key</button>
+                <button id="operations-providers" type="button">Provider List</button>
+              </div>
+              <pre id="secret-output"></pre>
+              <pre id="providers-output"></pre>
+            </section>
+
+            <section class="dock-tab is-hidden" data-route="safety" data-view-scope="shared">
+              <h2>Safety <button type="button" class="help-trigger mini-help" data-help="safety" data-tooltip="Actor context, approvals, receipts, retention and evidence controls.">?</button></h2>
+              <p class="panel-note">Manage identity for actions, approvals, receipts, retention, and audit evidence.</p>
+              <article class="card">
+                <header>
+                  <strong>Setup Lock</strong>
+                  <span class="pill">Mandatory</span>
+                </header>
+                <p id="setup-lock-status" class="panel-note">Complete setup and keys, then confirm initial setup to unlock Runtime Ops and Mission.</p>
+                <div class="card-actions">
+                  <button id="setup-complete-initial" type="button">Unlock Runtime &amp; Mission</button>
+                </div>
+              </article>
+              <article class="card">
+                <header>
+                  <strong>Action Identity</strong>
+                </header>
+                <div class="grid-form">
+                  <label class="field" for="actor-id">
+                    <span>Operator ID</span>
+                    <input id="actor-id" value="local-user" />
+                    <small>Recorded in audit logs for all actions.</small>
+                  </label>
+                  <label class="field" for="actor-role">
+                    <span>Operator Role</span>
+                    <select id="actor-role">
+                      <option value="admin">admin</option>
+                      <option value="manager">manager</option>
+                      <option value="user">user</option>
+                      <option value="observer">observer</option>
+                    </select>
+                    <small>Use admin/manager for approval decisions.</small>
+                  </label>
+                </div>
+              </article>
+
+              <div class="inline-row">
+                <label class="field field-inline" for="approval-use-id">
+                  <span>Existing Approval ID (optional)</span>
+                  <input id="approval-use-id" placeholder="approval-abc123..." />
+                </label>
+                <button id="control-plane-refresh" type="button">Refresh Policy</button>
+                <button id="approvals-refresh" type="button">View Approvals</button>
+                <button id="receipts-refresh" type="button">View Receipts</button>
+                <button id="receipts-export" type="button">Export Receipts</button>
+              </div>
+
+              <form id="approval-resolve-form" class="inline-row">
+                <label class="field field-inline" for="approval-id">
+                  <span>Approval ID</span>
+                  <input id="approval-id" placeholder="approval-..." required />
+                </label>
+                <label class="field field-inline" for="approval-role">
+                  <span>Approver Role</span>
+                <select id="approval-role">
+                  <option value="admin">admin</option>
+                  <option value="manager">manager</option>
+                </select>
+                </label>
+                <label class="field field-inline" for="approval-approved">
+                  <span>Approval Decision</span>
+                <select id="approval-approved">
+                  <option value="true">approve</option>
+                  <option value="false">reject</option>
+                </select>
+                </label>
+                <label class="field field-inline" for="approval-reason">
+                  <span>Reason (optional)</span>
+                  <input id="approval-reason" placeholder="why approved/rejected" />
+                </label>
+                <button type="submit">Submit Decision</button>
+              </form>
+
+              <form id="retention-form" class="inline-row">
+                <label class="field field-inline" for="retention-receipts-days">
+                  <span>Receipt Retention Days</span>
+                  <input id="retention-receipts-days" type="number" value="30" min="1" required />
+                </label>
+                <label class="field field-inline" for="retention-approvals-days">
+                  <span>Approval Retention Days</span>
+                  <input id="retention-approvals-days" type="number" value="90" min="1" required />
+                </label>
+                <button id="retention-save" type="submit">Save Retention</button>
+                <button id="retention-purge" type="button">Purge</button>
+              </form>
+
+              <pre id="access-output"></pre>
+              <pre id="control-plane-output"></pre>
+              <div class="cards" id="approvals-list"></div>
+              <div class="cards" id="receipts-list"></div>
+            </section>
+
+            <section class="dock-tab is-hidden" data-route="channels" data-view-scope="shared">
+              <h2>Team Tools <button type="button" class="help-trigger mini-help" data-help="tools" data-tooltip="Channels, integrations, skills and MCP with draft→validate→publish lifecycle.">?</button></h2>
+              <p class="panel-note">Add channels, integrations, skills, and connectors with a safe install → validate → publish flow.</p>
+              <article class="card">
+                <header>
+                  <strong>Safe Publish Flow</strong>
+                  <span class="pill">Install -> Validate -> Publish</span>
+                </header>
+                <p class="panel-note">
+                  1) Install as draft (disabled). 2) Validate health. 3) Publish with approval.
+                  4) Reload runtime only when needed.
+                </p>
+                <div class="card-actions">
+                  <button id="tools-validate-runtime" type="button" class="secondary-btn">Validate Runtime Health</button>
+                  <button id="tools-reload-runtime" type="button" class="secondary-btn">Reload Runtime (if needed)</button>
+                  <button id="integrations-catalog" type="button" class="secondary-btn">Open Integration Catalog</button>
+                </div>
+                <pre id="tools-lifecycle-output"></pre>
+              </article>
+              <article class="card">
+                <header>
+                  <strong>Publish Checklist</strong>
+                </header>
+                <p>1) Save required API keys in the Keys step.</p>
+                <p>2) Install tools as draft first.</p>
+                <p>3) Validate runtime + connector health.</p>
+                <p>4) Publish only with least-privilege contracts.</p>
+              </article>
+
+              <div class="inline-row">
+                <button id="channels-refresh" type="button">Refresh Channels</button>
+              </div>
+              <form id="channel-add-form" class="stack">
+                <select id="channel-type" required>
+                  <option value="">Choose channel</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="discord">Discord</option>
+                  <option value="slack">Slack</option>
+                  <option value="webhook">Webhook</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="signal">Signal</option>
+                  <option value="matrix">Matrix</option>
+                  <option value="imessage">iMessage</option>
+                </select>
+                <textarea id="channel-config-json" rows="3" placeholder='channel config JSON'></textarea>
+                <button type="submit">Save Channel</button>
+              </form>
+              <form id="channel-remove-form" class="inline-row">
+                <input id="channel-remove-name" placeholder="channel id/name" required />
+                <button type="submit">Remove Channel</button>
+              </form>
+              <form id="channel-bind-telegram-form" class="inline-row">
+                <input id="channel-telegram-identity" placeholder="telegram username or id" required />
+                <button type="submit">Link Telegram</button>
+              </form>
+              <pre id="channels-output"></pre>
+
+              <h3>Integrations (Catalog)</h3>
+              <form id="integration-install-form" class="grid-form">
+                <select id="integration-id" required>
+                  <option value="">Choose integration</option>
+                </select>
+                <p id="integration-catalog-hint" class="field-hint">
+                  Select an integration to see category, status, and setup guidance.
+                </p>
+                <p id="integration-key-hint" class="field-hint">
+                  Required key: set provider/integration secret in Keys before publish.
+                </p>
+                <input id="integration-access" placeholder="allowed data access (csv)" required />
+                <input id="integration-actions" placeholder="allowed actions (csv)" required />
+                <input id="integration-destinations" placeholder="allowed destinations (csv)" required />
+                <button type="submit">Install as Draft</button>
+              </form>
+              <div class="cards" id="integration-list"></div>
+
+              <h3>Skills</h3>
+              <form id="skills-install-form" class="grid-form">
+                <select id="skill-preset">
+                  <option value="">Choose skill preset (optional)</option>
+                  <option value="incident-response">Incident Response</option>
+                  <option value="compliance-review">Compliance Review</option>
+                  <option value="change-management">Change Management</option>
+                  <option value="finops-analysis">FinOps Analysis</option>
+                  <option value="healthcare-safety">Healthcare Safety</option>
+                </select>
+                <input id="skill-id" list="skill-id-options" placeholder="skill id" required />
+                <datalist id="skill-id-options">
+                  <option value="incident-response"></option>
+                  <option value="compliance-review"></option>
+                  <option value="change-management"></option>
+                  <option value="finops-analysis"></option>
+                  <option value="healthcare-safety"></option>
+                </datalist>
+                <input id="skill-name" placeholder="display name" required />
+                <select id="skill-source">
+                  <option value="catalog">catalog</option>
+                  <option value="community">community</option>
+                  <option value="workspace">workspace</option>
+                </select>
+                <input id="skill-version" placeholder="version" value="1.0.0" required />
+                <input id="skill-access" placeholder="can access (csv)" required />
+                <input id="skill-actions" placeholder="can do (csv)" required />
+                <input id="skill-destinations" placeholder="data destinations (csv)" required />
+                <textarea id="skill-manifest" rows="2" placeholder="optional SKILL.md"></textarea>
+                <button type="submit">Install as Draft</button>
+              </form>
+              <div class="cards" id="skills-list"></div>
+
+              <h3>Tool Connectors (MCP)</h3>
+              <form id="mcp-install-form" class="grid-form">
+                <select id="mcp-preset">
+                  <option value="">Choose connector preset (optional)</option>
+                  <option value="filesystem">Filesystem Connector</option>
+                  <option value="github">GitHub Connector</option>
+                  <option value="postgres">Postgres Connector</option>
+                  <option value="slack">Slack Connector</option>
+                  <option value="http">HTTP API Connector</option>
+                </select>
+                <input id="mcp-id" placeholder="connector id" required />
+                <input id="mcp-name" placeholder="display name" required />
+                <select id="mcp-transport">
+                  <option value="sse">sse</option>
+                  <option value="stdio">stdio</option>
+                  <option value="websocket">websocket</option>
+                </select>
+                <input id="mcp-endpoint" placeholder="endpoint" />
+                <input id="mcp-command" placeholder="command" />
+                <input id="mcp-args" placeholder="args (csv)" />
+                <input id="mcp-env-secret-ids" placeholder="env secret ids (csv)" />
+                <input id="mcp-timeout" placeholder="timeout secs" type="number" value="30" />
+                <input id="mcp-access" placeholder="can access (csv)" required />
+                <input id="mcp-actions" placeholder="can do (csv)" required />
+                <input id="mcp-destinations" placeholder="data destinations (csv)" required />
+                <button type="submit">Install as Draft</button>
+              </form>
+              <p class="field-hint">
+                For MCP connectors, put required tokens in Keys and reference them via <code>env secret ids</code>.
+              </p>
+              <form id="mcp-update-form" class="inline-row">
+                <input id="mcp-update-id" placeholder="connector id" required />
+                <button type="submit">Update Config</button>
+              </form>
+              <div class="cards" id="mcp-list"></div>
+            </section>
+
+            <section class="dock-tab is-hidden" data-route="runtime" data-view-scope="shared">
+              <h2>Runtime Ops <button type="button" class="help-trigger mini-help" data-help="runtime" data-tooltip="Runtime health, doctor, cron, migration and operational controls.">?</button></h2>
+              <p class="panel-note">Health checks, service lifecycle, model refresh, and scheduler controls.</p>
+              <div class="inline-row">
+                <button id="runtime-refresh-inline" type="button">Runtime State</button>
+              </div>
+              <form id="runtime-message-inline-form" class="stack">
+                <label for="runtime-message-inline">Send runtime message</label>
+                <textarea
+                  id="runtime-message-inline"
+                  rows="2"
+                  placeholder="Run health check and summarize current status"
+                ></textarea>
+                <button type="submit">Send Runtime Message</button>
+              </form>
+
+              <div class="inline-row">
+                <button id="operations-status" type="button">Status</button>
+                <button id="operations-doctor" type="button">Doctor</button>
+                <button id="operations-channel-doctor" type="button">Channel Doctor</button>
+                <button id="operations-auth-profiles" type="button">Auth Profiles</button>
+                <button id="operations-memory-list" type="button">Memory List</button>
+                <button id="operations-config-schema" type="button">Config Schema</button>
+                <button id="operations-command-surface" type="button">Command Surface</button>
+                <button id="operations-cost-summary" type="button">Cost Summary</button>
+                <button id="operations-response-cache-stats" type="button">Cache Stats</button>
+              </div>
+
+              <form id="migration-openclaw-form" class="inline-row">
+                <input id="migration-openclaw-source" placeholder="OpenClaw source path (optional)" />
+                <label for="migration-openclaw-dry-run">dry-run</label>
+                <input id="migration-openclaw-dry-run" type="checkbox" checked />
+                <button type="submit">Run OpenClaw Migration</button>
+              </form>
+
+              <form id="completions-form" class="inline-row">
+                <select id="completion-shell">
+                  <option value="bash">bash</option>
+                  <option value="zsh">zsh</option>
+                  <option value="fish">fish</option>
+                  <option value="powershell">powershell</option>
+                  <option value="elvish">elvish</option>
+                </select>
+                <input id="completion-binary-path" placeholder="zeroclaw binary path (optional)" />
+                <button type="submit">Generate Shell Completion</button>
+              </form>
+
+              <form id="models-refresh-form" class="inline-row">
+                <input id="model-provider" placeholder="provider override (optional)" />
+                <label for="model-force">force</label>
+                <input id="model-force" type="checkbox" />
+                <button type="submit">Refresh Models</button>
+              </form>
+
+              <form id="service-action-form" class="inline-row">
+                <select id="service-action">
+                  <option value="status">status</option>
+                  <option value="install">install</option>
+                  <option value="start">start</option>
+                  <option value="stop">stop</option>
+                  <option value="uninstall">uninstall</option>
+                </select>
+                <button type="submit">Run Service Action</button>
+              </form>
+
+              <h3>Cron</h3>
+              <div class="inline-row"><button id="cron-refresh" type="button">Refresh Cron</button></div>
+              <form id="cron-add-form" class="stack">
+                <input id="cron-expression" placeholder="cron expression" required />
+                <input id="cron-command" placeholder="command" required />
+                <input id="cron-timezone" placeholder="timezone optional" />
+                <button type="submit">Add Cron Job</button>
+              </form>
+              <div class="inline-row">
+                <input id="cron-job-id" placeholder="cron job id" />
+                <button id="cron-remove" type="button">Remove</button>
+                <button id="cron-pause" type="button">Pause</button>
+                <button id="cron-resume" type="button">Resume</button>
+              </div>
+              <pre id="cron-list-output"></pre>
+
+              <details>
+                <summary>Advanced Pairing (optional)</summary>
+                <form id="pairing-form" class="inline-row">
+                  <select id="pairing-transport">
+                    <option value="lan">lan</option>
+                    <option value="tailscale">tailscale</option>
+                    <option value="cloudflare">cloudflare</option>
+                    <option value="ngrok">ngrok</option>
+                  </select>
+                  <input id="pairing-endpoint" placeholder="endpoint override" />
+                  <input id="pairing-expires" type="number" value="15" />
+                  <button type="submit">Create Bundle</button>
+                </form>
+                <pre id="pairing-output"></pre>
+              </details>
+
+              <pre id="operations-output"></pre>
+            </section>
+
+            <section class="dock-tab is-hidden" data-route="deployment" data-view-scope="shared">
+              <h2>Deployment Matrix</h2>
+              <p class="panel-note">
+                Host runs the local runtime on linux/macos/windows. Client is optimized for approvals, alerts,
+                status, chat, and lightweight actions on macos/windows/android/ios.
+              </p>
+              <p class="panel-note">
+                Mobile and desktop client installs connect to your organization host through approved channels and
+                policy/approval gates.
+              </p>
+              <pre id="deployment-output"></pre>
+            </section>
+
+            <section class="dock-tab is-hidden" data-route="mission" data-view-scope="shared">
+              <h2>Mission Control <button type="button" class="help-trigger mini-help" data-help="mission" data-tooltip="Workspace operations, rollout, RBAC, audit, outcomes and workflow board/list.">?</button></h2>
+              <p class="panel-note">
+                Run daily operations: workspace control, runtime, rollout, RBAC, audit evidence, and outcomes.
+              </p>
+              <div class="mission-kpis">
+                <article class="metric">
+                  <span>Compliance posture</span>
+                  <strong id="mission-kpi-compliance-view">0%</strong>
+                  <div class="progress-track"><div id="mission-progress-compliance" class="progress-fill"></div></div>
+                </article>
+                <article class="metric">
+                  <span>Outcome solved rate</span>
+                  <strong id="mission-kpi-outcome-view">0%</strong>
+                  <div class="progress-track"><div id="mission-progress-outcomes" class="progress-fill"></div></div>
+                </article>
+                <article class="metric">
+                  <span>Rollout ring</span>
+                  <strong id="mission-kpi-rollout-view">pilot</strong>
+                  <div class="progress-track"><div id="mission-progress-rollout" class="progress-fill"></div></div>
+                </article>
+              </div>
+
+              <div class="inline-row">
+                <button id="mission-refresh" type="button">Refresh Mission</button>
+                <button id="audit-refresh" type="button">Verify Audit</button>
+                <button id="evidence-export" type="button">Evidence Export</button>
+              </div>
+              <div class="inline-row">
+                <button id="mission-runtime-status" type="button" class="secondary-btn">Runtime Status</button>
+                <button id="mission-runtime-doctor" type="button" class="secondary-btn">Runtime Doctor</button>
+                <button id="mission-runtime-start" type="button" class="secondary-btn">Start Runtime</button>
+                <button id="mission-runtime-stop" type="button" class="secondary-btn">Stop Runtime</button>
+                <button id="mission-workspaces-refresh" type="button" class="secondary-btn">Refresh Workspaces</button>
+              </div>
+              <form id="mission-workspace-create-form" class="inline-row">
+                <input id="mission-workspace-create-name" placeholder="new workspace/profile name" required />
+                <button type="submit" class="secondary-btn">Create Workspace</button>
+              </form>
+              <div id="mission-workspaces-list" class="cards"></div>
+              <details class="raw-details">
+                <summary>View JSON: Mission Summary</summary>
+                <pre id="mission-output"></pre>
+              </details>
+              <details class="raw-details">
+                <summary>View JSON: Evidence Export</summary>
+                <pre id="evidence-output"></pre>
+              </details>
+
+              <h3>Release Rollout</h3>
+              <form id="rollout-stage-form" class="grid-form">
+                <input id="rollout-release-id" placeholder="release id" required />
+                <input id="rollout-version" placeholder="version" required />
+                <input id="rollout-checksum" placeholder="checksum sha256" required />
+                <input id="rollout-signature" placeholder="signature optional" />
+                <input id="rollout-sbom-checksum" placeholder="sbom checksum optional" />
+                <select id="rollout-ring">
+                  <option value="pilot">pilot</option>
+                  <option value="group">group</option>
+                  <option value="all">all</option>
+                </select>
+                <button type="submit">Stage Release</button>
+              </form>
+              <div class="inline-row">
+                <button id="rollout-promote" type="button">Promote</button>
+                <button id="rollout-rollback" type="button">Rollback</button>
+                <button id="rollout-refresh" type="button">Refresh Rollout</button>
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Rollout State</summary>
+                <pre id="rollout-output"></pre>
+              </details>
+
+              <h3>Release Signing Policy</h3>
+              <p class="panel-note">
+                Trusted signers format: <code>key_id:base64_public_key</code> (one signer per line). Signature format:
+                <code>key_id:base64_signature</code>.
+              </p>
+              <form id="rollout-signing-form" class="grid-form">
+                <label for="rollout-signature-required">signature required</label>
+                <input id="rollout-signature-required" type="checkbox" />
+                <textarea
+                  id="rollout-trusted-signers"
+                  rows="3"
+                  placeholder="release-key-1:BASE64_ED25519_PUBLIC_KEY"
+                ></textarea>
+                <button type="submit">Save Signing Policy</button>
+              </form>
+              <details class="raw-details">
+                <summary>View JSON: Signing Policy</summary>
+                <pre id="rollout-signing-output"></pre>
+              </details>
+
+              <h3>Industry Policy Profile</h3>
+              <p class="panel-note">
+                Swappable policy template for industry controls (transport restrictions, provider allowlists, pairing/bind defaults).
+              </p>
+              <div class="inline-row">
+                <select id="policy-template-id">
+                  <option value="general">general</option>
+                  <option value="finance_strict">finance_strict</option>
+                  <option value="healthcare_strict">healthcare_strict</option>
+                  <option value="gov_zero_public">gov_zero_public</option>
+                </select>
+                <button id="policy-apply" type="button">Apply Policy Profile</button>
+                <button id="policy-refresh" type="button">Refresh Policy</button>
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Industry Policy</summary>
+                <pre id="policy-output"></pre>
+              </details>
+
+              <h3>Compliance Profile (AI Act / NIST / Industry)</h3>
+              <p class="panel-note">
+                Applies compliance posture packs to mission controls and exposes control-level pass/fail evidence.
+              </p>
+              <div class="inline-row">
+                <select id="compliance-template-id">
+                  <option value="general_baseline">general_baseline</option>
+                  <option value="ai_act_nist_strict">ai_act_nist_strict</option>
+                  <option value="finance_fintech">finance_fintech</option>
+                  <option value="healthcare_pharma">healthcare_pharma</option>
+                  <option value="tech_cloud_web3_ai">tech_cloud_web3_ai</option>
+                  <option value="government_us_eu">government_us_eu</option>
+                </select>
+                <button id="compliance-apply" type="button">Apply Compliance Profile</button>
+                <button id="compliance-refresh" type="button">Refresh Compliance</button>
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Compliance Profile</summary>
+                <pre id="compliance-output"></pre>
+              </details>
+
+              <h3>RBAC</h3>
+              <form id="rbac-user-form" class="grid-form">
+                <input id="rbac-user-id" placeholder="user id" required />
+                <input id="rbac-display-name" placeholder="display name" required />
+                <select id="rbac-role">
+                  <option value="admin">admin</option>
+                  <option value="manager">manager</option>
+                  <option value="user">user</option>
+                  <option value="observer">observer</option>
+                </select>
+                <label for="rbac-active">active</label>
+                <input id="rbac-active" type="checkbox" checked />
+                <button type="submit">Upsert User</button>
+              </form>
+              <button id="rbac-refresh" type="button">Refresh RBAC</button>
+              <details class="raw-details">
+                <summary>View JSON: RBAC</summary>
+                <pre id="rbac-output"></pre>
+              </details>
+
+              <h3>Audit Chain</h3>
+              <details class="raw-details">
+                <summary>View JSON: Audit Chain</summary>
+                <pre id="audit-output"></pre>
+              </details>
+
+              <h3>Remote Audit Sink</h3>
+              <form id="audit-remote-config-form" class="grid-form">
+                <label for="audit-remote-enabled">enabled</label>
+                <input id="audit-remote-enabled" type="checkbox" />
+                <input id="audit-remote-endpoint" placeholder="https://audit.example.com/ingest" />
+                <select id="audit-remote-kind">
+                  <option value="siem">siem</option>
+                  <option value="object_lock">object_lock</option>
+                </select>
+                <input id="audit-remote-auth-secret" placeholder="secret id (optional)" />
+                <label for="audit-remote-verify-tls">verify tls</label>
+                <input id="audit-remote-verify-tls" type="checkbox" checked />
+                <input id="audit-remote-batch-size" type="number" min="1" max="5000" value="200" />
+                <button type="submit">Save Audit Sink</button>
+              </form>
+              <div class="inline-row">
+                <button id="audit-remote-sync" type="button">Sync Audit</button>
+                <button id="audit-remote-refresh" type="button">Refresh Audit Sink</button>
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Remote Audit Sink</summary>
+                <pre id="audit-remote-output"></pre>
+              </details>
+
+              <h3>Outcomes</h3>
+              <form id="outcome-form" class="grid-form">
+                <input id="outcome-title" placeholder="outcome title" required />
+                <select id="outcome-status">
+                  <option value="solved">solved</option>
+                  <option value="partial">partial</option>
+                  <option value="unsolved">unsolved</option>
+                </select>
+                <input id="outcome-impact" type="number" min="0" max="100" value="50" required />
+                <input id="outcome-owner" placeholder="owner optional" />
+                <input id="outcome-receipt-id" placeholder="related receipt id optional" />
+                <textarea id="outcome-notes" rows="2" placeholder="notes optional"></textarea>
+                <button type="submit">Record Outcome</button>
+              </form>
+              <div class="inline-row">
+                <button id="outcomes-refresh" type="button">Refresh Outcomes</button>
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Outcomes</summary>
+                <pre id="outcomes-output"></pre>
+              </details>
+
+              <h3>Workflow Kanban</h3>
+              <p class="panel-note">
+                Track runtime and agent operations by workspace/task/skill/tool with pending -> in_progress -> done/fail flow.
+              </p>
+              <div class="inline-row workflow-view-toggle">
+                <button id="workflow-view-board" type="button" class="toggle-btn is-active">Board</button>
+                <button id="workflow-view-list" type="button" class="toggle-btn secondary-btn">List</button>
+                <span class="field-hint">Board supports drag/drop between columns. List supports quick status updates.</span>
+              </div>
+              <form id="workflow-task-form" class="grid-form">
+                <input id="workflow-task-id" placeholder="task id (optional for update)" />
+                <input id="workflow-task-title" placeholder="task title" required />
+                <textarea id="workflow-task-description" rows="2" placeholder="description optional"></textarea>
+                <select id="workflow-task-status">
+                  <option value="pending">pending</option>
+                  <option value="in_progress">in_progress</option>
+                  <option value="done">done</option>
+                  <option value="failed">failed</option>
+                  <option value="blocked">blocked</option>
+                </select>
+                <select id="workflow-task-priority">
+                  <option value="medium">medium</option>
+                  <option value="low">low</option>
+                  <option value="high">high</option>
+                  <option value="critical">critical</option>
+                </select>
+                <input id="workflow-task-owner" placeholder="owner optional" />
+                <input id="workflow-task-runtime-task-id" placeholder="runtime task id optional" />
+                <input id="workflow-task-agent-id" placeholder="agent id optional" />
+                <input id="workflow-task-skill-id" placeholder="skill id optional" />
+                <input id="workflow-task-tool-id" placeholder="tool id optional" />
+                <input id="workflow-task-tags" placeholder="tags csv (ops,risk,approval)" />
+                <input id="workflow-task-risk-score" type="number" min="0" max="100" value="50" />
+                <input id="workflow-task-receipt-id" placeholder="related receipt id optional" />
+                <button type="submit">Upsert Task</button>
+              </form>
+              <div class="inline-row">
+                <button id="workflow-refresh" type="button">Refresh Workflow</button>
+              </div>
+              <div id="workflow-board-view" class="workflow-view">
+                <div class="kanban-board">
+                  <article class="kanban-column" data-status="pending">
+                    <h4>Pending <span id="workflow-count-pending" class="pill">0</span></h4>
+                    <div id="workflow-col-pending" class="cards"></div>
+                  </article>
+                  <article class="kanban-column" data-status="in_progress">
+                    <h4>In Progress <span id="workflow-count-in-progress" class="pill">0</span></h4>
+                    <div id="workflow-col-in-progress" class="cards"></div>
+                  </article>
+                  <article class="kanban-column" data-status="done">
+                    <h4>Done <span id="workflow-count-done" class="pill">0</span></h4>
+                    <div id="workflow-col-done" class="cards"></div>
+                  </article>
+                  <article class="kanban-column" data-status="failed">
+                    <h4>Failed <span id="workflow-count-failed" class="pill">0</span></h4>
+                    <div id="workflow-col-failed" class="cards"></div>
+                  </article>
+                  <article class="kanban-column" data-status="blocked">
+                    <h4>Blocked <span id="workflow-count-blocked" class="pill">0</span></h4>
+                    <div id="workflow-col-blocked" class="cards"></div>
+                  </article>
+                </div>
+              </div>
+              <div id="workflow-list-view" class="workflow-view is-hidden">
+                <div class="workflow-list-wrap">
+                  <table class="workflow-table">
+                    <thead>
+                      <tr>
+                        <th>Task</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Owner</th>
+                        <th>Risk</th>
+                        <th>Agent/Skill/Tool</th>
+                        <th>Move</th>
+                      </tr>
+                    </thead>
+                    <tbody id="workflow-list-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <details class="inline-details">
+                <summary>Manual Move By Task ID (optional)</summary>
+                <div class="inline-row">
+                  <input id="workflow-move-task-id" placeholder="task id for move" />
+                  <select id="workflow-move-status">
+                    <option value="pending">pending</option>
+                    <option value="in_progress">in_progress</option>
+                    <option value="done">done</option>
+                    <option value="failed">failed</option>
+                    <option value="blocked">blocked</option>
+                  </select>
+                  <button id="workflow-move" type="button">Move Task</button>
+                </div>
+              </details>
+              <div id="workflow-drag-hint" class="field-hint">
+                Drag and drop cards in board view to transition status.
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Workflow Summary</summary>
+                <pre id="workflow-output"></pre>
+              </details>
+
+              <h3>Billing Entitlement</h3>
+              <form id="billing-config-form" class="grid-form">
+                <input id="billing-backend-url" placeholder="https://billing.example.com/api/verify" />
+                <input id="billing-auth-secret" placeholder="secret id (optional)" />
+                <label for="billing-enforce-verification">enforce verification</label>
+                <input id="billing-enforce-verification" type="checkbox" />
+                <button type="submit">Save Billing Config</button>
+              </form>
+              <form id="billing-verify-form" class="grid-form">
+                <textarea id="billing-receipt-payload" rows="3" placeholder='{"store":"app_store","receipt":"..."}'></textarea>
+                <input id="billing-platform" placeholder="ios/android/web optional" />
+                <button type="submit">Verify Receipt</button>
+              </form>
+              <div class="inline-row">
+                <button id="billing-refresh" type="button">Refresh Billing</button>
+              </div>
+              <details class="raw-details">
+                <summary>View JSON: Billing Entitlement</summary>
+                <pre id="billing-output"></pre>
+              </details>
+            </section>
+          </div>
+        </aside>
+      </section>
+
+      <nav class="mobile-nav" aria-label="Mobile quick navigation">
+        <a href="#main-canvas">Command Center</a>
+        <button data-route-target="channels" id="dock-channels" type="button">Team Tools</button>
+        <a href="#logs-panel">Logs</a>
+      </nav>
+
+      <footer class="app-footer">
+        <span>AI runtime control plane for enterprise operations.</span>
+        <span>
+          <a href="#mission">Legal</a>
+          <a href="#mission">Privacy</a>
+          <a href="#mission">Compliance</a>
+        </span>
+      </footer>
+    </main>
+    <dialog id="help-dialog" class="help-dialog">
+      <form method="dialog" class="help-dialog-card">
+        <header>
+          <strong id="help-title">Help</strong>
+          <button type="submit" class="secondary-btn">Close</button>
+        </header>
+        <p id="help-content"></p>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

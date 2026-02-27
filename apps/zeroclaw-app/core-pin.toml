@@ -1,0 +1,11 @@
+[core]
+repository = "https://github.com/mariospeterman/zeroclaw"
+tag = "v0.1.2-core"
+commit = "a4bfc0448f4c4467511c8e78c1085dd48ca7fc41"
+core_protocol_version = "1.0.0"
+event_schema_version = 1
+config_schema_version = 1
+
+[compatibility]
+suite = "scripts/ci/run_wrapper_compat_suite.sh"
+upgrade_sla_days = 7
